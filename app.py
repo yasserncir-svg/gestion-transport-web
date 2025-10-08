@@ -93,15 +93,15 @@ class GestionTransportWeb:
             return []
     
     def extraire_dates_des_entetes(self, file):
-        """Extrait les dates depuis les en-têtes du fichier Excel - VERSION CORRIGÉE"""
+        """Extrait les dates depuis la 2ème ligne du fichier Excel"""
         try:
             # Lire les 2 premières lignes pour les en-têtes
             df_entetes = pd.read_excel(file, nrows=2, header=None)
             dates_par_jour = {}
             
             st.write("🔍 Debug - Structure du fichier:")
-            st.write("Ligne 0 (en-têtes):", df_entetes.iloc[0].tolist())
-            st.write("Ligne 1:", df_entetes.iloc[1].tolist())
+            st.write("Ligne 0:", df_entetes.iloc[0].tolist())
+            st.write("Ligne 1 (dates):", df_entetes.iloc[1].tolist())
             
             # Mapping des positions des colonnes vers les jours - CORRIGÉ
             positions_jours = {
@@ -109,11 +109,11 @@ class GestionTransportWeb:
                 5: 'Vendredi', 6: 'Samedi', 7: 'Dimanche'
             }
             
-            # Parcourir les colonnes de jours
+            # Parcourir les colonnes de jours - MAINTENANT ON PREND LA LIGNE 1 (2ème ligne)
             for col_index, jour_nom in positions_jours.items():
                 if col_index < len(df_entetes.columns):
-                    # Prendre la cellule de la première ligne (ligne 0) qui contient les dates
-                    cellule = df_entetes.iloc[0, col_index]
+                    # Prendre la cellule de la DEUXIÈME ligne (ligne 1) qui contient les dates
+                    cellule = df_entetes.iloc[1, col_index]
                     nom_colonne = str(cellule) if pd.notna(cellule) else ""
                     
                     st.write(f"Colonne {col_index} ({jour_nom}): '{nom_colonne}'")
@@ -530,17 +530,8 @@ def main():
         
         if uploaded_file:
             try:
-                # Lire le fichier avec gestion flexible des en-têtes
-                df_test = pd.read_excel(uploaded_file, nrows=5, header=None)
-                
-                # Trouver la ligne qui contient "Salarié"
-                ligne_depart = 0
-                for i in range(min(5, len(df_test))):
-                    if 'Salarié' in str(df_test.iloc[i, 0]):
-                        ligne_depart = i
-                        break
-                
-                gestion.df = pd.read_excel(uploaded_file, skiprows=ligne_depart)
+                # Charger les données en sautant les 2 premières lignes d'en-tête
+                gestion.df = pd.read_excel(uploaded_file, skiprows=2)
                 
                 # Vérifier et renommer les colonnes
                 if len(gestion.df.columns) >= 9:
