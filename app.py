@@ -6,6 +6,13 @@ from datetime import datetime, timedelta
 import tempfile
 from io import BytesIO
 import base64
+from reportlab.lib.pagesizes import letter, A4
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
+from reportlab.lib.units import inch
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 
 class GestionTransportWeb:
     def __init__(self):
@@ -313,9 +320,16 @@ class GestionTransportWeb:
         """Supprime une affectation"""
         self.df_chauffeurs = self.df_chauffeurs.drop(index).reset_index(drop=True)
         st.session_state.chauffeurs_data = self.df_chauffeurs
+
+    def separer_chauffeurs_taxi(self, df_filtre):
+        """Sépare les chauffeurs Taxi des autres chauffeurs"""
+        chauffeurs_taxi = df_filtre[df_filtre['Chauffeur'].str.contains('taxi|Taxi|TAXI', na=False)]
+        chauffeurs_autres = df_filtre[~df_filtre['Chauffeur'].str.contains('taxi|Taxi|TAXI', na=False)]
+        
+        return chauffeurs_taxi, chauffeurs_autres
     
     def exporter_suivi_chauffeurs(self, jour_selectionne_export):
-        """Exporte le suivi des chauffeurs avec statistiques complètes"""
+        """Exporte le suivi des chauffeurs avec statistiques complètes et mise en forme"""
         if self.df_chauffeurs.empty:
             return None
         
@@ -327,96 +341,196 @@ class GestionTransportWeb:
         if df_filtre.empty:
             return None
         
+        # Séparer Taxi des autres chauffeurs
+        chauffeurs_taxi, chauffeurs_autres = self.separer_chauffeurs_taxi(df_filtre)
+        
         donnees_export = []
-        entete = ["Salarié", "HEURE", "CHAUFFEUR", "DESTINATION", "Plateau", "type", "date"]
-        donnees_export.append(entete)
+        
+        # Style d'en-tête
+        entete_style = ["Salarié", "HEURE", "CHAUFFEUR", "DESTINATION", "Plateau", "type", "date"]
+        donnees_export.append(entete_style)
         donnees_export.append(["", "", "", "", "", "", ""])
         
-        # Statistiques détaillées
-        total_courses = 0
-        statistiques_societes = {}
-        statistiques_chauffeurs = {}
-        
-        # Grouper par jour, chauffeur, heure et type
-        groupes = df_filtre.groupby(['Jour', 'Chauffeur', 'Heure', 'Type_Transport'])
-        
-        # Trier par date, puis chauffeur, puis heure
-        ordre_jours = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
-        groupes_tries = sorted(groupes, key=lambda x: (
-            ordre_jours.index(x[0][0]),
-            x[0][1], 
-            x[0][2]
-        ))
-        
-        for (jour, chauffeur, heure, type_transport), groupe in groupes_tries:
-            date_groupe = self.get_date_du_jour(jour)
-            nb_personnes_course = len(groupe)
-            societes_course = {}
-            
-            # Compter par chauffeur
-            if chauffeur not in statistiques_chauffeurs:
-                statistiques_chauffeurs[chauffeur] = 0
-            statistiques_chauffeurs[chauffeur] += 1
-            
-            # Ajouter chaque agent
-            for idx, (_, ligne) in enumerate(groupe.iterrows()):
-                societe = ligne['Societe']
-                if societe not in societes_course:
-                    societes_course[societe] = 0
-                societes_course[societe] += 1
-                
-                if societe not in statistiques_societes:
-                    statistiques_societes[societe] = 0
-                statistiques_societes[societe] += 1
-                
-                donnees_export.append([
-                    ligne['Agent'], f"{heure}", chauffeur, ligne['Adresse'],
-                    societe, type_transport.lower(), date_groupe
-                ])
-            
-            # Ajouter les statistiques de la course
-            if societes_course:
-                pourcentages = []
-                for societe, count in societes_course.items():
-                    pourcentage = (count / nb_personnes_course) * 100
-                    pourcentages.append(f"{pourcentage:.0f}% {societe}")
-                
-                texte_pourcentages = " + ".join(pourcentages)
-                donnees_export.append([
-                    f"RÉPARTITION COURSE ({nb_personnes_course} pers.)", "", "", texte_pourcentages, "", "", ""
-                ])
-            
-            total_courses += 1
+        # Traiter d'abord les chauffeurs normaux
+        if not chauffeurs_autres.empty:
+            donnees_export.append(["🚗 CHAUFFEURS NORMAUX", "", "", "", "", "", ""])
             donnees_export.append(["", "", "", "", "", "", ""])
+            
+            total_courses_normaux = 0
+            statistiques_societes_normaux = {}
+            statistiques_chauffeurs_normaux = {}
+            
+            # Grouper par jour, chauffeur, heure et type
+            groupes = chauffeurs_autres.groupby(['Jour', 'Chauffeur', 'Heure', 'Type_Transport'])
+            
+            # Trier par date, puis chauffeur, puis heure
+            ordre_jours = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
+            groupes_tries = sorted(groupes, key=lambda x: (
+                ordre_jours.index(x[0][0]),
+                x[0][1], 
+                x[0][2]
+            ))
+            
+            for (jour, chauffeur, heure, type_transport), groupe in groupes_tries:
+                date_groupe = self.get_date_du_jour(jour)
+                nb_personnes_course = len(groupe)
+                societes_course = {}
+                
+                # Compter par chauffeur
+                if chauffeur not in statistiques_chauffeurs_normaux:
+                    statistiques_chauffeurs_normaux[chauffeur] = 0
+                statistiques_chauffeurs_normaux[chauffeur] += 1
+                
+                # Ajouter chaque agent
+                for idx, (_, ligne) in enumerate(groupe.iterrows()):
+                    societe = ligne['Societe']
+                    if societe not in societes_course:
+                        societes_course[societe] = 0
+                    societes_course[societe] += 1
+                    
+                    if societe not in statistiques_societes_normaux:
+                        statistiques_societes_normaux[societe] = 0
+                    statistiques_societes_normaux[societe] += 1
+                    
+                    donnees_export.append([
+                        ligne['Agent'], f"{heure}", chauffeur, ligne['Adresse'],
+                        societe, type_transport.lower(), date_groupe
+                    ])
+                
+                # Ajouter les statistiques de la course
+                if societes_course:
+                    pourcentages = []
+                    for societe, count in societes_course.items():
+                        pourcentage = (count / nb_personnes_course) * 100
+                        pourcentages.append(f"{pourcentage:.0f}% {societe}")
+                    
+                    texte_pourcentages = " + ".join(pourcentages)
+                    donnees_export.append([
+                        f"RÉPARTITION COURSE ({nb_personnes_course} pers.)", "", "", texte_pourcentages, "", "", ""
+                    ])
+                
+                total_courses_normaux += 1
+                donnees_export.append(["", "", "", "", "", "", ""])
+        
+        # Traiter les chauffeurs Taxi
+        if not chauffeurs_taxi.empty:
+            donnees_export.append(["🚕 CHAUFFEURS TAXI", "", "", "", "", "", ""])
+            donnees_export.append(["", "", "", "", "", "", ""])
+            
+            total_courses_taxi = 0
+            statistiques_societes_taxi = {}
+            statistiques_chauffeurs_taxi = {}
+            
+            # Grouper par jour, chauffeur, heure et type
+            groupes_taxi = chauffeurs_taxi.groupby(['Jour', 'Chauffeur', 'Heure', 'Type_Transport'])
+            
+            # Trier par date, puis chauffeur, puis heure
+            ordre_jours = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
+            groupes_taxi_tries = sorted(groupes_taxi, key=lambda x: (
+                ordre_jours.index(x[0][0]),
+                x[0][1], 
+                x[0][2]
+            ))
+            
+            for (jour, chauffeur, heure, type_transport), groupe in groupes_taxi_tries:
+                date_groupe = self.get_date_du_jour(jour)
+                nb_personnes_course = len(groupe)
+                societes_course = {}
+                
+                # Compter par chauffeur
+                if chauffeur not in statistiques_chauffeurs_taxi:
+                    statistiques_chauffeurs_taxi[chauffeur] = 0
+                statistiques_chauffeurs_taxi[chauffeur] += 1
+                
+                # Ajouter chaque agent
+                for idx, (_, ligne) in enumerate(groupe.iterrows()):
+                    societe = ligne['Societe']
+                    if societe not in societes_course:
+                        societes_course[societe] = 0
+                    societes_course[societe] += 1
+                    
+                    if societe not in statistiques_societes_taxi:
+                        statistiques_societes_taxi[societe] = 0
+                    statistiques_societes_taxi[societe] += 1
+                    
+                    donnees_export.append([
+                        ligne['Agent'], f"{heure}", chauffeur, ligne['Adresse'],
+                        societe, type_transport.lower(), date_groupe
+                    ])
+                
+                # Ajouter les statistiques de la course
+                if societes_course:
+                    pourcentages = []
+                    for societe, count in societes_course.items():
+                        pourcentage = (count / nb_personnes_course) * 100
+                        pourcentages.append(f"{pourcentage:.0f}% {societe}")
+                    
+                    texte_pourcentages = " + ".join(pourcentages)
+                    donnees_export.append([
+                        f"RÉPARTITION COURSE TAXI ({nb_personnes_course} pers.)", "", "", texte_pourcentages, "", "", ""
+                    ])
+                
+                total_courses_taxi += 1
+                donnees_export.append(["", "", "", "", "", "", ""])
         
         # 🔥 AJOUT DES STATISTIQUES GLOBALES DÉTAILLÉES
         donnees_export.append(["STATISTIQUES GLOBALES", "", "", "", "", "", ""])
-        donnees_export.append([f"Total des courses: {total_courses}", "", "", "", "", "", ""])
         
-        # Statistiques par chauffeur
-        donnees_export.append(["📊 PAR CHAUFFEUR", "", "", "", "", "", ""])
-        for chauffeur, nb_courses in sorted(statistiques_chauffeurs.items(), key=lambda x: x[1], reverse=True):
-            pourcentage_chauffeur = (nb_courses / total_courses * 100) if total_courses > 0 else 0
-            donnees_export.append([
-                "", "", f"{chauffeur}: {nb_courses} courses ({pourcentage_chauffeur:.1f}%)", "", "", "", ""
-            ])
+        # Statistiques pour chauffeurs normaux
+        if not chauffeurs_autres.empty:
+            donnees_export.append(["🚗 CHAUFFEURS NORMALUX", "", "", "", "", "", ""])
+            donnees_export.append([f"Total des courses normales: {total_courses_normaux}", "", "", "", "", "", ""])
+            
+            # Statistiques par chauffeur normaux
+            donnees_export.append(["📊 PAR CHAUFFEUR NORMAL", "", "", "", "", "", ""])
+            for chauffeur, nb_courses in sorted(statistiques_chauffeurs_normaux.items(), key=lambda x: x[1], reverse=True):
+                pourcentage_chauffeur = (nb_courses / total_courses_normaux * 100) if total_courses_normaux > 0 else 0
+                donnees_export.append([
+                    "", "", f"{chauffeur}: {nb_courses} courses ({pourcentage_chauffeur:.1f}%)", "", "", "", ""
+                ])
+            
+            # Statistiques par société normaux
+            donnees_export.append(["🏢 PAR SOCIÉTÉ NORMALE", "", "", "", "", "", ""])
+            total_personnes_normaux = sum(statistiques_societes_normaux.values())
+            for societe, count in sorted(statistiques_societes_normaux.items(), key=lambda x: x[1], reverse=True):
+                pourcentage_global = (count / total_personnes_normaux * 100) if total_personnes_normaux > 0 else 0
+                donnees_export.append([
+                    "", "", "", f"{societe}: {count} personnes ({pourcentage_global:.1f}%)", "", "", ""
+                ])
         
-        # Statistiques par société
-        donnees_export.append(["🏢 PAR SOCIÉTÉ", "", "", "", "", "", ""])
-        total_personnes = sum(statistiques_societes.values())
-        for societe, count in sorted(statistiques_societes.items(), key=lambda x: x[1], reverse=True):
-            pourcentage_global = (count / total_personnes * 100) if total_personnes > 0 else 0
-            donnees_export.append([
-                "", "", "", f"{societe}: {count} personnes ({pourcentage_global:.1f}%)", "", "", ""
-            ])
+        # Statistiques pour Taxi
+        if not chauffeurs_taxi.empty:
+            donnees_export.append(["🚕 CHAUFFEURS TAXI", "", "", "", "", "", ""])
+            donnees_export.append([f"Total des courses taxi: {total_courses_taxi}", "", "", "", "", "", ""])
+            
+            # Statistiques par chauffeur taxi
+            donnees_export.append(["📊 PAR CHAUFFEUR TAXI", "", "", "", "", "", ""])
+            for chauffeur, nb_courses in sorted(statistiques_chauffeurs_taxi.items(), key=lambda x: x[1], reverse=True):
+                pourcentage_chauffeur = (nb_courses / total_courses_taxi * 100) if total_courses_taxi > 0 else 0
+                donnees_export.append([
+                    "", "", f"{chauffeur}: {nb_courses} courses ({pourcentage_chauffeur:.1f}%)", "", "", "", ""
+                ])
+            
+            # Statistiques par société taxi
+            donnees_export.append(["🏢 PAR SOCIÉTÉ TAXI", "", "", "", "", "", ""])
+            total_personnes_taxi = sum(statistiques_societes_taxi.values())
+            for societe, count in sorted(statistiques_societes_taxi.items(), key=lambda x: x[1], reverse=True):
+                pourcentage_global = (count / total_personnes_taxi * 100) if total_personnes_taxi > 0 else 0
+                donnees_export.append([
+                    "", "", "", f"{societe}: {count} personnes ({pourcentage_global:.1f}%)", "", "", ""
+                ])
         
         # Résumé final
         donnees_export.append(["", "", "", "", "", "", ""])
         donnees_export.append(["RÉSUMÉ FINAL", "", "", "", "", "", ""])
-        donnees_export.append([f"Total courses: {total_courses}", "", "", "", "", "", ""])
-        donnees_export.append([f"Total personnes transportées: {total_personnes}", "", "", "", "", "", ""])
-        donnees_export.append([f"Nombre de chauffeurs: {len(statistiques_chauffeurs)}", "", "", "", "", "", ""])
-        donnees_export.append([f"Nombre de sociétés: {len(statistiques_societes)}", "", "", "", "", "", ""])
+        total_courses_global = total_courses_normaux + total_courses_taxi
+        total_personnes_global = (sum(statistiques_societes_normaux.values()) if not chauffeurs_autres.empty else 0) + (sum(statistiques_societes_taxi.values()) if not chauffeurs_taxi.empty else 0)
+        
+        donnees_export.append([f"Total courses toutes catégories: {total_courses_global}", "", "", "", "", "", ""])
+        donnees_export.append([f"Total personnes transportées: {total_personnes_global}", "", "", "", "", "", ""])
+        donnees_export.append([f"Nombre de chauffeurs normaux: {len(statistiques_chauffeurs_normaux)}", "", "", "", "", "", ""])
+        donnees_export.append([f"Nombre de chauffeurs taxi: {len(statistiques_chauffeurs_taxi)}", "", "", "", "", "", ""])
+        donnees_export.append([f"Nombre total de sociétés: {len(set(list(statistiques_societes_normaux.keys()) + list(statistiques_societes_taxi.keys())))}", "", "", "", "", "", ""])
         
         return pd.DataFrame(donnees_export)
 
@@ -474,6 +588,123 @@ class GestionTransportWeb:
                 donnees_rapport.append([])
         
         return pd.DataFrame(donnees_rapport)
+
+    def generer_pdf_imprimable(self, type_liste, jour_selectionne):
+        """Génère un PDF imprimable pour les listes de ramassage/départ"""
+        if type_liste == "ramassage":
+            liste = self.liste_ramassage_actuelle
+            titre = "LISTE DE RAMASSAGE"
+        else:
+            liste = self.liste_depart_actuelle
+            titre = "LISTE DE DÉPART"
+        
+        if not liste:
+            return None
+        
+        # Filtrer par jour si sélectionné
+        if jour_selectionne != 'Tous':
+            liste = [agent for agent in liste if agent['Jour'] == jour_selectionne]
+        
+        if not liste:
+            return None
+        
+        # Créer le PDF
+        buffer = BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=1*inch, bottomMargin=1*inch)
+        elements = []
+        
+        styles = getSampleStyleSheet()
+        titre_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=16,
+            spaceAfter=30,
+            alignment=1,  # Centré
+            textColor=colors.HexColor('#1f77b4')
+        )
+        
+        # Titre
+        titre_para = Paragraph(titre, titre_style)
+        elements.append(titre_para)
+        
+        # Date de génération
+        date_style = ParagraphStyle(
+            'DateStyle',
+            parent=styles['Normal'],
+            fontSize=10,
+            alignment=1,
+            spaceAfter=20
+        )
+        date_para = Paragraph(f"Généré le {datetime.now().strftime('%d/%m/%Y à %H:%M')}", date_style)
+        elements.append(date_para)
+        
+        elements.append(Spacer(1, 20))
+        
+        # Grouper par jour
+        agents_par_jour = {}
+        for agent in liste:
+            jour = agent['Jour']
+            if jour not in agents_par_jour:
+                agents_par_jour[jour] = []
+            agents_par_jour[jour].append(agent)
+        
+        # Trier les jours dans l'ordre
+        ordre_jours = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
+        
+        for jour in ordre_jours:
+            if jour in agents_par_jour:
+                date_jour = self.get_date_du_jour(jour)
+                
+                # Titre du jour
+                jour_style = ParagraphStyle(
+                    'JourStyle',
+                    parent=styles['Heading2'],
+                    fontSize=12,
+                    spaceAfter=12,
+                    textColor=colors.HexColor('#ff7f0e')
+                )
+                jour_para = Paragraph(f"📅 {jour} ({date_jour})", jour_style)
+                elements.append(jour_para)
+                
+                # Préparer les données du tableau
+                data = [["Agent", "Heure", "Adresse", "Téléphone", "Société"]]
+                
+                # Trier les agents par heure
+                agents_par_jour[jour].sort(key=lambda x: x['Heure'])
+                for agent in agents_par_jour[jour]:
+                    data.append([
+                        agent['Agent'],
+                        agent['Heure_affichage'],
+                        agent['Adresse'],
+                        agent['Telephone'],
+                        agent['Societe']
+                    ])
+                
+                # Créer le tableau
+                table = Table(data, colWidths=[1.5*inch, 0.7*inch, 2.5*inch, 1.2*inch, 1.5*inch])
+                table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f77b4')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, 0), 10),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                    ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                    ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                    ('FONTSIZE', (0, 1), (-1, -1), 8),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                    ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.lightgrey]),
+                ]))
+                
+                elements.append(table)
+                elements.append(Spacer(1, 20))
+        
+        # Construire le PDF
+        doc.build(elements)
+        pdf_data = buffer.getvalue()
+        buffer.close()
+        
+        return pdf_data
 
 def main():
     st.set_page_config(
@@ -605,10 +836,10 @@ def main():
         with tab1:
             st.markdown('<h2 class="section-header">📋 Liste de Ramassage</h2>', unsafe_allow_html=True)
             
-            # Bouton Imprimer
-            col_btn1, col_btn2 = st.columns([1, 4])
+            # Boutons Imprimer
+            col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 2])
             with col_btn1:
-                if st.button("🖨️ Imprimer la liste", type="primary"):
+                if st.button("📄 Excel Imprimable", type="primary"):
                     rapport = gestion.generer_rapport_imprimable("ramassage", jour_selectionne)
                     if rapport is not None:
                         output = BytesIO()
@@ -616,10 +847,23 @@ def main():
                             rapport.to_excel(writer, sheet_name='Liste_Ramassage', index=False, header=False)
                         
                         st.download_button(
-                            label="📥 Télécharger liste imprimable",
+                            label="📥 Télécharger Excel",
                             data=output.getvalue(),
                             file_name=f"Liste_Ramassage_{datetime.now().strftime('%d%m%Y_%H%M')}.xlsx",
                             mime="application/vnd.ms-excel"
+                        )
+                    else:
+                        st.warning("Aucune donnée à imprimer")
+            
+            with col_btn2:
+                if st.button("📊 PDF Imprimable", type="secondary"):
+                    pdf_data = gestion.generer_pdf_imprimable("ramassage", jour_selectionne)
+                    if pdf_data is not None:
+                        st.download_button(
+                            label="📥 Télécharger PDF",
+                            data=pdf_data,
+                            file_name=f"Liste_Ramassage_{datetime.now().strftime('%d%m%Y_%H%M')}.pdf",
+                            mime="application/pdf"
                         )
                     else:
                         st.warning("Aucune donnée à imprimer")
@@ -644,10 +888,10 @@ def main():
         with tab2:
             st.markdown('<h2 class="section-header">📋 Liste de Départ</h2>', unsafe_allow_html=True)
             
-            # Bouton Imprimer
-            col_btn1, col_btn2 = st.columns([1, 4])
+            # Boutons Imprimer
+            col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 2])
             with col_btn1:
-                if st.button("🖨️ Imprimer la liste", type="primary", key="print_depart"):
+                if st.button("📄 Excel Imprimable", type="primary", key="excel_depart"):
                     rapport = gestion.generer_rapport_imprimable("depart", jour_selectionne)
                     if rapport is not None:
                         output = BytesIO()
@@ -655,10 +899,23 @@ def main():
                             rapport.to_excel(writer, sheet_name='Liste_Depart', index=False, header=False)
                         
                         st.download_button(
-                            label="📥 Télécharger liste imprimable",
+                            label="📥 Télécharger Excel",
                             data=output.getvalue(),
                             file_name=f"Liste_Depart_{datetime.now().strftime('%d%m%Y_%H%M')}.xlsx",
                             mime="application/vnd.ms-excel"
+                        )
+                    else:
+                        st.warning("Aucune donnée à imprimer")
+            
+            with col_btn2:
+                if st.button("📊 PDF Imprimable", type="secondary", key="pdf_depart"):
+                    pdf_data = gestion.generer_pdf_imprimable("depart", jour_selectionne)
+                    if pdf_data is not None:
+                        st.download_button(
+                            label="📥 Télécharger PDF",
+                            data=pdf_data,
+                            file_name=f"Liste_Depart_{datetime.now().strftime('%d%m%Y_%H%M')}.pdf",
+                            mime="application/pdf"
                         )
                     else:
                         st.warning("Aucune donnée à imprimer")
@@ -688,9 +945,16 @@ def main():
             with col1:
                 st.subheader("➕ Ajouter une affectation")
                 
-                # Liste des chauffeurs
+                # Liste des chauffeurs existants + Taxi
                 chauffeurs_liste = gestion.get_liste_chauffeurs_voitures()
-                noms_chauffeurs = [ch['chauffeur'] for ch in chauffeurs_liste] if chauffeurs_liste else ["Aucun chauffeur trouvé"]
+                noms_chauffeurs = [ch['chauffeur'] for ch in chauffeurs_liste] if chauffeurs_liste else []
+                
+                # Ajouter "Taxi" à la liste des chauffeurs
+                if "Taxi" not in noms_chauffeurs:
+                    noms_chauffeurs.append("Taxi")
+                
+                if not noms_chauffeurs:
+                    noms_chauffeurs = ["Aucun chauffeur trouvé"]
                 
                 chauffeur = st.selectbox("Chauffeur", noms_chauffeurs)
                 type_transport = st.selectbox("Type de transport", ["Ramassage", "Départ"])
@@ -735,7 +999,9 @@ def main():
                         with st.container():
                             col_a, col_b = st.columns([4, 1])
                             with col_a:
-                                st.write(f"**{ligne['Chauffeur']}** - {ligne['Heure']} - {ligne['Type_Transport']} - {ligne['Jour']}")
+                                chauffeur_nom = ligne['Chauffeur']
+                                badge = "🚕" if "taxi" in chauffeur_nom.lower() else "🚗"
+                                st.write(f"{badge} **{chauffeur_nom}** - {ligne['Heure']} - {ligne['Type_Transport']} - {ligne['Jour']}")
                                 st.write(f"👤 {ligne['Agent']} | 📍 {ligne['Adresse']} | 📞 {ligne['Telephone']} | 🏢 {ligne['Societe']}")
                             with col_b:
                                 if st.button("🗑️", key=f"del_{idx}"):
@@ -766,7 +1032,8 @@ def main():
                             # Aperçu des statistiques
                             st.markdown("### 📈 Aperçu des Statistiques Incluses")
                             st.markdown("""
-                            - ✅ **Total des courses**
+                            - ✅ **Séparation Taxi/Chauffeurs normaux**
+                            - ✅ **Total des courses par catégorie**
                             - ✅ **Courses par chauffeur** avec pourcentages
                             - ✅ **Personnes transportées par société** avec pourcentages
                             - ✅ **Résumé final détaillé**
