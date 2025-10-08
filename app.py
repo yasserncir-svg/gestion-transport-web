@@ -41,7 +41,7 @@ class GestionTransportWeb:
     def get_info_agent(self, nom_agent):
         """Récupère les informations d'un agent"""
         if self.df_info is None or self.df_info.empty:
-            return {"adresse": "Non renseigné", "tel": "Non renseigné", "societe": "Non renseigné", "voiture": "Non"}
+            return {"adresse": "Adresse non renseignée", "tel": "Tél non renseigné", "societe": "Société non renseignée", "voiture": "Non"}
         
         try:
             nom_recherche = nom_agent.strip()
@@ -57,16 +57,16 @@ class GestionTransportWeb:
                             a_voiture = "Oui"
                     
                     return {
-                        "adresse": str(row.iloc[1]) if len(row) > 1 else "Non renseigné",
-                        "tel": str(row.iloc[2]) if len(row) > 2 else "Non renseigné",
-                        "societe": str(row.iloc[3]) if len(row) > 3 else "Non renseigné",
+                        "adresse": str(row.iloc[1]) if len(row) > 1 else "Adresse non renseignée",
+                        "tel": str(row.iloc[2]) if len(row) > 2 else "Tél non renseigné",
+                        "societe": str(row.iloc[3]) if len(row) > 3 else "Société non renseignée",
                         "voiture": a_voiture
                     }
             
-            return {"adresse": "Non renseigné", "tel": "Non renseigné", "societe": "Non renseigné", "voiture": "Non"}
+            return {"adresse": "Adresse non renseignée", "tel": "Tél non renseigné", "societe": "Société non renseignée", "voiture": "Non"}
             
         except Exception as e:
-            return {"adresse": "Non renseigné", "tel": "Non renseigné", "societe": "Non renseigné", "voiture": "Non"}
+            return {"adresse": "Adresse non renseignée", "tel": "Tél non renseigné", "societe": "Société non renseignée", "voiture": "Non"}
     
     def get_liste_chauffeurs_voitures(self):
         """Récupère la liste des chauffeurs depuis info.xlsx"""
@@ -93,75 +93,58 @@ class GestionTransportWeb:
             return []
     
     def extraire_dates_des_entetes(self, file):
-        """Extrait les dates depuis les en-têtes du fichier Excel"""
+        """Extrait les dates depuis les en-têtes du fichier Excel - VERSION CORRIGÉE"""
         try:
             # Lire les 2 premières lignes pour les en-têtes
             df_entetes = pd.read_excel(file, nrows=2, header=None)
             dates_par_jour = {}
             
-            # Mapping des positions des colonnes vers les jours
+            st.write("🔍 Debug - Structure du fichier:")
+            st.write("Ligne 0 (en-têtes):", df_entetes.iloc[0].tolist())
+            st.write("Ligne 1:", df_entetes.iloc[1].tolist())
+            
+            # Mapping des positions des colonnes vers les jours - CORRIGÉ
             positions_jours = {
-                1: 'Mardi', 2: 'Mercredi', 3: 'Jeudi', 4: 'Vendredi', 
-                5: 'Samedi', 6: 'Dimanche', 7: 'Lundi'
+                1: 'Lundi', 2: 'Mardi', 3: 'Mercredi', 4: 'Jeudi', 
+                5: 'Vendredi', 6: 'Samedi', 7: 'Dimanche'
             }
             
             # Parcourir les colonnes de jours
             for col_index, jour_nom in positions_jours.items():
                 if col_index < len(df_entetes.columns):
-                    # Prendre la cellule de la première ligne (ligne 0)
+                    # Prendre la cellule de la première ligne (ligne 0) qui contient les dates
                     cellule = df_entetes.iloc[0, col_index]
                     nom_colonne = str(cellule) if pd.notna(cellule) else ""
                     
+                    st.write(f"Colonne {col_index} ({jour_nom}): '{nom_colonne}'")
+                    
                     # Chercher un motif date (jj/mm ou jj/mm/aaaa)
-                    match = re.search(r'(\d{1,2})[/-](\d{1,2})[/-]?(\d{4})?', nom_colonne)
+                    match = re.search(r'(\d{1,2})[/-](\d{1,2})', nom_colonne)
                     if match:
                         jour = match.group(1)
                         mois = match.group(2)
-                        annee = match.group(3) if match.group(3) else datetime.now().year
                         
-                        # Ajuster l'année si le mois est passé
+                        # Déterminer l'année
+                        annee_courante = datetime.now().year
                         mois_actuel = datetime.now().month
-                        if int(mois) < mois_actuel and not match.group(3):
-                            annee = datetime.now().year + 1
                         
-                        date_trouvee = f"{jour.zfill(2)}/{mois.zfill(2)}/{annee}"
+                        if int(mois) < mois_actuel:
+                            annee_courante += 1
+                        
+                        date_trouvee = f"{jour.zfill(2)}/{mois.zfill(2)}/{annee_courante}"
                         dates_par_jour[jour_nom] = date_trouvee
+                        st.success(f"✅ {jour_nom}: {date_trouvee}")
                     else:
                         # Date par défaut si non détectée
-                        dates_par_jour[jour_nom] = self.calculer_date_par_defaut(jour_nom)
+                        date_par_defaut = self.calculer_date_par_defaut(jour_nom)
+                        dates_par_jour[jour_nom] = date_par_defaut
+                        st.warning(f"⚠️ {jour_nom}: Date non détectée, utilisation: {date_par_defaut}")
             
             return dates_par_jour
             
         except Exception as e:
             st.error(f"Erreur extraction dates: {e}")
             return self.generer_dates_par_defaut()
-    
-    def debug_dates(self, file):
-        """Affiche le debug des dates détectées"""
-        try:
-            df_entetes = pd.read_excel(file, nrows=2, header=None)
-            st.write("🔍 Debug - Contenu des 2 premières lignes:")
-            for i in range(2):
-                st.write(f"Ligne {i}: {df_entetes.iloc[i].tolist()}")
-        except Exception as e:
-            st.error(f"Erreur debug: {e}")
-    
-    def formater_date_complete(self, jour, mois):
-        annee_courante = datetime.now().year
-        mois_actuel = datetime.now().month
-        
-        if int(mois) < mois_actuel:
-            annee_courante += 1
-        
-        jour_format = jour.zfill(2)
-        mois_format = mois.zfill(2)
-        date_complete = f"{jour_format}/{mois_format}/{annee_courante}"
-        
-        try:
-            datetime.strptime(date_complete, '%d/%m/%Y')
-            return date_complete
-        except ValueError:
-            return self.calculer_date_par_defaut()
     
     def calculer_date_par_defaut(self, jour_nom=None):
         aujourd_hui = datetime.now()
@@ -299,8 +282,10 @@ class GestionTransportWeb:
                         }
                         self.liste_depart_actuelle.append(agent_data)
         
-        self.liste_ramassage_actuelle.sort(key=lambda x: (x['Jour'], x['Heure']))
-        self.liste_depart_actuelle.sort(key=lambda x: (x['Jour'], x['Heure']))
+        # Trier par jour (dans l'ordre de la semaine) puis par heure
+        ordre_jours = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
+        self.liste_ramassage_actuelle.sort(key=lambda x: (ordre_jours.index(x['Jour']), x['Heure']))
+        self.liste_depart_actuelle.sort(key=lambda x: (ordre_jours.index(x['Jour']), x['Heure']))
     
     def ajouter_affectation(self, chauffeur, heure, agents_selectionnes, type_transport, jour):
         """Ajoute une affectation de chauffeur"""
@@ -356,9 +341,11 @@ class GestionTransportWeb:
         groupes = df_filtre.groupby(['Jour', 'Chauffeur', 'Heure', 'Type_Transport'])
         
         # Trier par date, puis chauffeur, puis heure
+        ordre_jours = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
         groupes_tries = sorted(groupes, key=lambda x: (
-            datetime.strptime(self.get_date_du_jour(x[0][0]), '%d/%m/%Y'),
-            x[0][0], x[0][1], x[0][2]
+            ordre_jours.index(x[0][0]),
+            x[0][1], 
+            x[0][2]
         ))
         
         for (jour, chauffeur, heure, type_transport), groupe in groupes_tries:
@@ -433,6 +420,61 @@ class GestionTransportWeb:
         
         return pd.DataFrame(donnees_export)
 
+    def generer_rapport_imprimable(self, type_liste, jour_selectionne):
+        """Génère un rapport imprimable pour les listes de ramassage/départ"""
+        if type_liste == "ramassage":
+            liste = self.liste_ramassage_actuelle
+            titre = "LISTE DE RAMASSAGE"
+        else:
+            liste = self.liste_depart_actuelle
+            titre = "LISTE DE DÉPART"
+        
+        if not liste:
+            return None
+        
+        # Filtrer par jour si sélectionné
+        if jour_selectionne != 'Tous':
+            liste = [agent for agent in liste if agent['Jour'] == jour_selectionne]
+        
+        if not liste:
+            return None
+        
+        # Créer le rapport
+        donnees_rapport = []
+        donnees_rapport.append([titre])
+        donnees_rapport.append([f"Généré le {datetime.now().strftime('%d/%m/%Y à %H:%M')}"])
+        donnees_rapport.append([])
+        
+        # Grouper par jour
+        agents_par_jour = {}
+        for agent in liste:
+            jour = agent['Jour']
+            if jour not in agents_par_jour:
+                agents_par_jour[jour] = []
+            agents_par_jour[jour].append(agent)
+        
+        # Trier les jours dans l'ordre
+        ordre_jours = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
+        for jour in ordre_jours:
+            if jour in agents_par_jour:
+                date_jour = self.get_date_du_jour(jour)
+                donnees_rapport.append([f"📅 {jour} ({date_jour})"])
+                donnees_rapport.append(["Agent", "Heure", "Adresse", "Téléphone", "Société"])
+                
+                # Trier les agents par heure
+                agents_par_jour[jour].sort(key=lambda x: x['Heure'])
+                for agent in agents_par_jour[jour]:
+                    donnees_rapport.append([
+                        agent['Agent'],
+                        agent['Heure_affichage'],
+                        agent['Adresse'],
+                        agent['Telephone'],
+                        agent['Societe']
+                    ])
+                donnees_rapport.append([])
+        
+        return pd.DataFrame(donnees_rapport)
+
 def main():
     st.set_page_config(
         page_title="🚗 Gestionnaire de Transport",
@@ -463,12 +505,13 @@ def main():
             border: 1px solid #c3e6cb;
             color: #155724;
         }
-        .stat-box {
-            padding: 1rem;
+        .print-button {
+            background-color: #28a745;
+            color: white;
+            padding: 0.5rem 1rem;
+            border: none;
             border-radius: 0.5rem;
-            background-color: #e8f4fd;
-            border: 1px solid #b3d9ff;
-            margin: 0.5rem 0;
+            cursor: pointer;
         }
         </style>
     """, unsafe_allow_html=True)
@@ -487,24 +530,35 @@ def main():
         
         if uploaded_file:
             try:
-                gestion.df = pd.read_excel(uploaded_file, skiprows=2)
-                # Vérifier le nombre de colonnes avant de renommer
+                # Lire le fichier avec gestion flexible des en-têtes
+                df_test = pd.read_excel(uploaded_file, nrows=5, header=None)
+                
+                # Trouver la ligne qui contient "Salarié"
+                ligne_depart = 0
+                for i in range(min(5, len(df_test))):
+                    if 'Salarié' in str(df_test.iloc[i, 0]):
+                        ligne_depart = i
+                        break
+                
+                gestion.df = pd.read_excel(uploaded_file, skiprows=ligne_depart)
+                
+                # Vérifier et renommer les colonnes
                 if len(gestion.df.columns) >= 9:
-                    gestion.df.columns = ['Salarie', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche', 'Lundi', 'Qualification']
+                    gestion.df.columns = ['Salarie', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche', 'Qualification']
                     gestion.dates_par_jour = gestion.extraire_dates_des_entetes(uploaded_file)
                     
                     st.success(f"✅ {uploaded_file.name} chargé")
+                    st.success(f"📊 {len(gestion.df)} agents détectés")
                     
                     # Afficher les dates détectées
                     with st.expander("📅 Dates détectées"):
-                        for jour, date in gestion.dates_par_jour.items():
-                            st.write(f"**{jour}**: {date}")
-                    
-                    # Bouton debug dates
-                    if st.button("🐛 Debug Dates"):
-                        gestion.debug_dates(uploaded_file)
+                        ordre_jours = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
+                        for jour in ordre_jours:
+                            if jour in gestion.dates_par_jour:
+                                st.write(f"**{jour}**: {gestion.dates_par_jour[jour]}")
                 else:
-                    st.error("❌ Format de fichier incorrect. Vérifiez le nombre de colonnes.")
+                    st.error(f"❌ Format de fichier incorrect. Colonnes détectées: {len(gestion.df.columns)}")
+                    st.write("Colonnes:", gestion.df.columns.tolist())
                         
             except Exception as e:
                 st.error(f"❌ Erreur lors du chargement: {str(e)}")
@@ -560,20 +614,37 @@ def main():
         with tab1:
             st.markdown('<h2 class="section-header">📋 Liste de Ramassage</h2>', unsafe_allow_html=True)
             
+            # Bouton Imprimer
+            col_btn1, col_btn2 = st.columns([1, 4])
+            with col_btn1:
+                if st.button("🖨️ Imprimer la liste", type="primary"):
+                    rapport = gestion.generer_rapport_imprimable("ramassage", jour_selectionne)
+                    if rapport is not None:
+                        output = BytesIO()
+                        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                            rapport.to_excel(writer, sheet_name='Liste_Ramassage', index=False, header=False)
+                        
+                        st.download_button(
+                            label="📥 Télécharger liste imprimable",
+                            data=output.getvalue(),
+                            file_name=f"Liste_Ramassage_{datetime.now().strftime('%d%m%Y_%H%M')}.xlsx",
+                            mime="application/vnd.ms-excel"
+                        )
+                    else:
+                        st.warning("Aucune donnée à imprimer")
+            
             if gestion.liste_ramassage_actuelle:
                 mode_heure = "HEURE D'ÉTÉ" if heure_ete_active else "HEURE NORMALE"
                 st.write(f"**Mode:** {mode_heure} | **Jours:** {jour_selectionne} | **Heures:** {', '.join([f'{h}h' for h in heures_ramassage])}")
                 
-                # Afficher par jour
-                jours_affiches = set()
-                for agent in gestion.liste_ramassage_actuelle:
-                    if agent['Jour'] not in jours_affiches:
-                        jours_affiches.add(agent['Jour'])
-                        date_jour = gestion.get_date_du_jour(agent['Jour'])
-                        st.subheader(f"📅 {agent['Jour']} ({date_jour})")
+                # Afficher par jour dans l'ordre
+                ordre_jours = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
+                for jour in ordre_jours:
+                    agents_du_jour = [a for a in gestion.liste_ramassage_actuelle if a['Jour'] == jour]
+                    if agents_du_jour and (jour_selectionne == 'Tous' or jour == jour_selectionne):
+                        date_jour = gestion.get_date_du_jour(jour)
+                        st.subheader(f"📅 {jour} ({date_jour})")
                         
-                        # Créer un DataFrame pour ce jour
-                        agents_du_jour = [a for a in gestion.liste_ramassage_actuelle if a['Jour'] == agent['Jour']]
                         df_affiche = pd.DataFrame(agents_du_jour)[['Agent', 'Heure_affichage', 'Adresse', 'Telephone', 'Societe']]
                         st.dataframe(df_affiche, use_container_width=True)
             else:
@@ -582,20 +653,37 @@ def main():
         with tab2:
             st.markdown('<h2 class="section-header">📋 Liste de Départ</h2>', unsafe_allow_html=True)
             
+            # Bouton Imprimer
+            col_btn1, col_btn2 = st.columns([1, 4])
+            with col_btn1:
+                if st.button("🖨️ Imprimer la liste", type="primary", key="print_depart"):
+                    rapport = gestion.generer_rapport_imprimable("depart", jour_selectionne)
+                    if rapport is not None:
+                        output = BytesIO()
+                        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                            rapport.to_excel(writer, sheet_name='Liste_Depart', index=False, header=False)
+                        
+                        st.download_button(
+                            label="📥 Télécharger liste imprimable",
+                            data=output.getvalue(),
+                            file_name=f"Liste_Depart_{datetime.now().strftime('%d%m%Y_%H%M')}.xlsx",
+                            mime="application/vnd.ms-excel"
+                        )
+                    else:
+                        st.warning("Aucune donnée à imprimer")
+            
             if gestion.liste_depart_actuelle:
                 mode_heure = "HEURE D'ÉTÉ" if heure_ete_active else "HEURE NORMALE"
                 st.write(f"**Mode:** {mode_heure} | **Jours:** {jour_selectionne} | **Heures:** {', '.join([f'{h}h' for h in heures_depart])}")
                 
-                # Afficher par jour
-                jours_affiches = set()
-                for agent in gestion.liste_depart_actuelle:
-                    if agent['Jour'] not in jours_affiches:
-                        jours_affiches.add(agent['Jour'])
-                        date_jour = gestion.get_date_du_jour(agent['Jour'])
-                        st.subheader(f"📅 {agent['Jour']} ({date_jour})")
+                # Afficher par jour dans l'ordre
+                ordre_jours = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
+                for jour in ordre_jours:
+                    agents_du_jour = [a for a in gestion.liste_depart_actuelle if a['Jour'] == jour]
+                    if agents_du_jour and (jour_selectionne == 'Tous' or jour == jour_selectionne):
+                        date_jour = gestion.get_date_du_jour(jour)
+                        st.subheader(f"📅 {jour} ({date_jour})")
                         
-                        # Créer un DataFrame pour ce jour
-                        agents_du_jour = [a for a in gestion.liste_depart_actuelle if a['Jour'] == agent['Jour']]
                         df_affiche = pd.DataFrame(agents_du_jour)[['Agent', 'Heure_affichage', 'Adresse', 'Telephone', 'Societe']]
                         st.dataframe(df_affiche, use_container_width=True)
             else:
