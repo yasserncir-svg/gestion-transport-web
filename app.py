@@ -95,31 +95,56 @@ class GestionTransportWeb:
     def extraire_dates_des_entetes(self, file):
         """Extrait les dates depuis les en-têtes du fichier Excel"""
         try:
+            # Lire les 2 premières lignes pour les en-têtes
             df_entetes = pd.read_excel(file, nrows=2, header=None)
             dates_par_jour = {}
             
+            # Mapping des positions des colonnes vers les jours
             positions_jours = {
                 1: 'Mardi', 2: 'Mercredi', 3: 'Jeudi', 4: 'Vendredi', 
                 5: 'Samedi', 6: 'Dimanche', 7: 'Lundi'
             }
             
+            # Parcourir les colonnes de jours
             for col_index, jour_nom in positions_jours.items():
                 if col_index < len(df_entetes.columns):
-                    nom_colonne = str(df_entetes.iloc[0, col_index]) if len(df_entetes) > 0 else ""
+                    # Prendre la cellule de la première ligne (ligne 0)
+                    cellule = df_entetes.iloc[0, col_index]
+                    nom_colonne = str(cellule) if pd.notna(cellule) else ""
                     
-                    match = re.search(r'(\d{1,2})/(\d{1,2})', nom_colonne)
+                    # Chercher un motif date (jj/mm ou jj/mm/aaaa)
+                    match = re.search(r'(\d{1,2})[/-](\d{1,2})[/-]?(\d{4})?', nom_colonne)
                     if match:
                         jour = match.group(1)
                         mois = match.group(2)
-                        date_trouvee = self.formater_date_complete(jour, mois)
+                        annee = match.group(3) if match.group(3) else datetime.now().year
+                        
+                        # Ajuster l'année si le mois est passé
+                        mois_actuel = datetime.now().month
+                        if int(mois) < mois_actuel and not match.group(3):
+                            annee = datetime.now().year + 1
+                        
+                        date_trouvee = f"{jour.zfill(2)}/{mois.zfill(2)}/{annee}"
                         dates_par_jour[jour_nom] = date_trouvee
                     else:
+                        # Date par défaut si non détectée
                         dates_par_jour[jour_nom] = self.calculer_date_par_defaut(jour_nom)
             
             return dates_par_jour
             
         except Exception as e:
+            st.error(f"Erreur extraction dates: {e}")
             return self.generer_dates_par_defaut()
+    
+    def debug_dates(self, file):
+        """Affiche le debug des dates détectées"""
+        try:
+            df_entetes = pd.read_excel(file, nrows=2, header=None)
+            st.write("🔍 Debug - Contenu des 2 premières lignes:")
+            for i in range(2):
+                st.write(f"Ligne {i}: {df_entetes.iloc[i].tolist()}")
+        except Exception as e:
+            st.error(f"Erreur debug: {e}")
     
     def formater_date_complete(self, jour, mois):
         annee_courante = datetime.now().year
@@ -305,7 +330,7 @@ class GestionTransportWeb:
         st.session_state.chauffeurs_data = self.df_chauffeurs
     
     def exporter_suivi_chauffeurs(self, jour_selectionne_export):
-        """Exporte le suivi des chauffeurs avec le nouveau format"""
+        """Exporte le suivi des chauffeurs avec statistiques complètes"""
         if self.df_chauffeurs.empty:
             return None
         
@@ -322,10 +347,15 @@ class GestionTransportWeb:
         donnees_export.append(entete)
         donnees_export.append(["", "", "", "", "", "", ""])
         
-        groupes = df_filtre.groupby(['Jour', 'Chauffeur', 'Heure', 'Type_Transport'])
+        # Statistiques détaillées
         total_courses = 0
         statistiques_societes = {}
+        statistiques_chauffeurs = {}
         
+        # Grouper par jour, chauffeur, heure et type
+        groupes = df_filtre.groupby(['Jour', 'Chauffeur', 'Heure', 'Type_Transport'])
+        
+        # Trier par date, puis chauffeur, puis heure
         groupes_tries = sorted(groupes, key=lambda x: (
             datetime.strptime(self.get_date_du_jour(x[0][0]), '%d/%m/%Y'),
             x[0][0], x[0][1], x[0][2]
@@ -336,6 +366,12 @@ class GestionTransportWeb:
             nb_personnes_course = len(groupe)
             societes_course = {}
             
+            # Compter par chauffeur
+            if chauffeur not in statistiques_chauffeurs:
+                statistiques_chauffeurs[chauffeur] = 0
+            statistiques_chauffeurs[chauffeur] += 1
+            
+            # Ajouter chaque agent
             for idx, (_, ligne) in enumerate(groupe.iterrows()):
                 societe = ligne['Societe']
                 if societe not in societes_course:
@@ -351,6 +387,7 @@ class GestionTransportWeb:
                     societe, type_transport.lower(), date_groupe
                 ])
             
+            # Ajouter les statistiques de la course
             if societes_course:
                 pourcentages = []
                 for societe, count in societes_course.items():
@@ -359,21 +396,40 @@ class GestionTransportWeb:
                 
                 texte_pourcentages = " + ".join(pourcentages)
                 donnees_export.append([
-                    f"RÉPARTITION COURSE", "", "", texte_pourcentages, "", "", ""
+                    f"RÉPARTITION COURSE ({nb_personnes_course} pers.)", "", "", texte_pourcentages, "", "", ""
                 ])
             
             total_courses += 1
             donnees_export.append(["", "", "", "", "", "", ""])
         
-        # Ajouter les statistiques globales
+        # 🔥 AJOUT DES STATISTIQUES GLOBALES DÉTAILLÉES
+        donnees_export.append(["STATISTIQUES GLOBALES", "", "", "", "", "", ""])
+        donnees_export.append([f"Total des courses: {total_courses}", "", "", "", "", "", ""])
+        
+        # Statistiques par chauffeur
+        donnees_export.append(["📊 PAR CHAUFFEUR", "", "", "", "", "", ""])
+        for chauffeur, nb_courses in sorted(statistiques_chauffeurs.items(), key=lambda x: x[1], reverse=True):
+            pourcentage_chauffeur = (nb_courses / total_courses * 100) if total_courses > 0 else 0
+            donnees_export.append([
+                "", "", f"{chauffeur}: {nb_courses} courses ({pourcentage_chauffeur:.1f}%)", "", "", "", ""
+            ])
+        
+        # Statistiques par société
+        donnees_export.append(["🏢 PAR SOCIÉTÉ", "", "", "", "", "", ""])
         total_personnes = sum(statistiques_societes.values())
-        if total_personnes > 0:
-            donnees_export.append(["STATISTIQUES GLOBALES PAR SOCIÉTÉ", "", "", "", "", "", ""])
-            for societe, count in sorted(statistiques_societes.items(), key=lambda x: x[1], reverse=True):
-                pourcentage_global = (count / total_personnes) * 100
-                donnees_export.append([
-                    "", "", "", f"{societe}: {count} personnes ({pourcentage_global:.1f}%)", "", "", ""
-                ])
+        for societe, count in sorted(statistiques_societes.items(), key=lambda x: x[1], reverse=True):
+            pourcentage_global = (count / total_personnes * 100) if total_personnes > 0 else 0
+            donnees_export.append([
+                "", "", "", f"{societe}: {count} personnes ({pourcentage_global:.1f}%)", "", "", ""
+            ])
+        
+        # Résumé final
+        donnees_export.append(["", "", "", "", "", "", ""])
+        donnees_export.append(["RÉSUMÉ FINAL", "", "", "", "", "", ""])
+        donnees_export.append([f"Total courses: {total_courses}", "", "", "", "", "", ""])
+        donnees_export.append([f"Total personnes transportées: {total_personnes}", "", "", "", "", "", ""])
+        donnees_export.append([f"Nombre de chauffeurs: {len(statistiques_chauffeurs)}", "", "", "", "", "", ""])
+        donnees_export.append([f"Nombre de sociétés: {len(statistiques_societes)}", "", "", "", "", "", ""])
         
         return pd.DataFrame(donnees_export)
 
@@ -407,6 +463,13 @@ def main():
             border: 1px solid #c3e6cb;
             color: #155724;
         }
+        .stat-box {
+            padding: 1rem;
+            border-radius: 0.5rem;
+            background-color: #e8f4fd;
+            border: 1px solid #b3d9ff;
+            margin: 0.5rem 0;
+        }
         </style>
     """, unsafe_allow_html=True)
     
@@ -425,15 +488,23 @@ def main():
         if uploaded_file:
             try:
                 gestion.df = pd.read_excel(uploaded_file, skiprows=2)
-                gestion.df.columns = ['Salarie', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche', 'Lundi', 'Qualification']
-                gestion.dates_par_jour = gestion.extraire_dates_des_entetes(uploaded_file)
-                
-                st.success(f"✅ {uploaded_file.name} chargé")
-                
-                # Afficher les dates détectées
-                with st.expander("📅 Dates détectées"):
-                    for jour, date in gestion.dates_par_jour.items():
-                        st.write(f"**{jour}**: {date}")
+                # Vérifier le nombre de colonnes avant de renommer
+                if len(gestion.df.columns) >= 9:
+                    gestion.df.columns = ['Salarie', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche', 'Lundi', 'Qualification']
+                    gestion.dates_par_jour = gestion.extraire_dates_des_entetes(uploaded_file)
+                    
+                    st.success(f"✅ {uploaded_file.name} chargé")
+                    
+                    # Afficher les dates détectées
+                    with st.expander("📅 Dates détectées"):
+                        for jour, date in gestion.dates_par_jour.items():
+                            st.write(f"**{jour}**: {date}")
+                    
+                    # Bouton debug dates
+                    if st.button("🐛 Debug Dates"):
+                        gestion.debug_dates(uploaded_file)
+                else:
+                    st.error("❌ Format de fichier incorrect. Vérifiez le nombre de colonnes.")
                         
             except Exception as e:
                 st.error(f"❌ Erreur lors du chargement: {str(e)}")
@@ -449,19 +520,19 @@ def main():
         col1, col2 = st.columns(2)
         with col1:
             st.subheader("🚗 Ramassage")
-            heure_6h = st.checkbox("6h", value=True)
-            heure_7h = st.checkbox("7h", value=True)
-            heure_8h = st.checkbox("8h", value=True)
-            heure_22h = st.checkbox("22h", value=True)
+            heure_6h = st.checkbox("6h", value=True, key="r6")
+            heure_7h = st.checkbox("7h", value=True, key="r7")
+            heure_8h = st.checkbox("8h", value=True, key="r8")
+            heure_22h = st.checkbox("22h", value=True, key="r22")
         
         with col2:
             st.subheader("🚙 Départ")
-            heure_22h_d = st.checkbox("22h ", value=True)
-            heure_23h = st.checkbox("23h", value=True)
-            heure_00h = st.checkbox("00h", value=True)
-            heure_01h = st.checkbox("01h", value=True)
-            heure_02h = st.checkbox("02h", value=True)
-            heure_03h = st.checkbox("03h", value=True)
+            heure_22h_d = st.checkbox("22h ", value=True, key="d22")
+            heure_23h = st.checkbox("23h", value=True, key="d23")
+            heure_00h = st.checkbox("00h", value=True, key="d0")
+            heure_01h = st.checkbox("01h", value=True, key="d1")
+            heure_02h = st.checkbox("02h", value=True, key="d2")
+            heure_03h = st.checkbox("03h", value=True, key="d3")
     
     # Contenu principal
     if gestion.df is not None:
@@ -594,10 +665,10 @@ def main():
                             st.divider()
                     
                     # Bouton d'export
-                    st.subheader("📊 Export")
-                    jour_export = st.selectbox("Jour à exporter", ['Tous', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'])
+                    st.subheader("📊 Export avec Statistiques")
+                    jour_export = st.selectbox("Jour à exporter", ['Tous', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'], key="export_jour")
                     
-                    if st.button("💾 Exporter le suivi des chauffeurs"):
+                    if st.button("💾 Exporter le suivi des chauffeurs", type="primary"):
                         df_export = gestion.exporter_suivi_chauffeurs(jour_export)
                         if df_export is not None:
                             # Créer le fichier Excel
@@ -609,9 +680,18 @@ def main():
                             st.download_button(
                                 label="📥 Télécharger le fichier Excel",
                                 data=output.getvalue(),
-                                file_name=f"Suivi_Chauffeurs_{datetime.now().strftime('%d%m%Y')}.xlsx",
+                                file_name=f"Suivi_Chauffeurs_{datetime.now().strftime('%d%m%Y_%H%M')}.xlsx",
                                 mime="application/vnd.ms-excel"
                             )
+                            
+                            # Aperçu des statistiques
+                            st.markdown("### 📈 Aperçu des Statistiques Incluses")
+                            st.markdown("""
+                            - ✅ **Total des courses**
+                            - ✅ **Courses par chauffeur** avec pourcentages
+                            - ✅ **Personnes transportées par société** avec pourcentages
+                            - ✅ **Résumé final détaillé**
+                            """)
                         else:
                             st.warning("Aucune donnée à exporter pour les critères sélectionnés")
                 
