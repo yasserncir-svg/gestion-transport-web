@@ -24,7 +24,6 @@ class GestionTransportWeb:
         
         # Fichier de sauvegarde permanent
         self.fichier_sauvegarde = "affectations_permanentes.xlsx"
-        self.fichier_info_sauvegarde = "info_complementaire.xlsx"
         
         # Prix par défaut
         self.prix_course_chauffeur = 10  # Prix par défaut pour les chauffeurs normaux
@@ -35,7 +34,7 @@ class GestionTransportWeb:
         self.charger_infos_agents()
     
     def initialiser_donnees(self):
-        """Initialise ou charger les données depuis le fichier de sauvegarde"""
+        """Initialise ou charge les données depuis le fichier de sauvegarde"""
         # Essayer de charger depuis la session state d'abord
         if 'chauffeurs_data' not in st.session_state:
             # Si pas en session, charger depuis le fichier
@@ -60,32 +59,17 @@ class GestionTransportWeb:
                     'Prix_Course', 'Statut_Paiement'
                 ])
                 st.session_state.chauffeurs_data = self.df_chauffeurs
-        
-        # Charger les informations complémentaires
-        if 'info_complementaire' not in st.session_state:
-            if os.path.exists(self.fichier_info_sauvegarde):
-                try:
-                    self.df_info_complementaire = pd.read_excel(self.fichier_info_sauvegarde)
-                    st.session_state.info_complementaire = self.df_info_complementaire
-                except:
-                    self.df_info_complementaire = pd.DataFrame(columns=['Agent', 'Adresse', 'Telephone', 'Societe'])
-                    st.session_state.info_complementaire = self.df_info_complementaire
-            else:
-                self.df_info_complementaire = pd.DataFrame(columns=['Agent', 'Adresse', 'Telephone', 'Societe'])
-                st.session_state.info_complementaire = self.df_info_complementaire
         else:
-            self.df_info_complementaire = st.session_state.info_complementaire
+            # Déjà en session state
+            self.df_chauffeurs = st.session_state.chauffeurs_data
     
     def sauvegarder_donnees_permanentes(self):
         """Sauvegarde les données dans un fichier permanent"""
         try:
             if not self.df_chauffeurs.empty:
                 self.df_chauffeurs.to_excel(self.fichier_sauvegarde, index=False)
-            
-            if not self.df_info_complementaire.empty:
-                self.df_info_complementaire.to_excel(self.fichier_info_sauvegarde, index=False)
-            
-            return True
+                return True
+            return False
         except Exception as e:
             st.error(f"❌ Erreur sauvegarde permanente: {e}")
             return False
@@ -103,85 +87,294 @@ class GestionTransportWeb:
             self.df_info = pd.DataFrame()
             st.sidebar.error(f"❌ Erreur chargement info.xlsx: {e}")
     
+    def sauvegarder_affectations(self):
+        """Sauvegarde les affectations dans un fichier Excel pour export"""
+        if self.df_chauffeurs.empty:
+            return None, None
+        
+        # Créer un nom de fichier avec la date du mois
+        nom_fichier = f"affectations_chauffeurs_{datetime.now().strftime('%Y_%m')}.xlsx"
+        
+        # Sauvegarder dans un buffer
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            self.df_chauffeurs.to_excel(writer, sheet_name='Affectations', index=False)
+        
+        return output.getvalue(), nom_fichier
+    
+    def charger_affectations(self, uploaded_file):
+        """Charge les affectations depuis un fichier Excel"""
+        try:
+            df_charge = pd.read_excel(uploaded_file)
+            # Vérifier que le fichier a les bonnes colonnes
+            colonnes_requises = ['Chauffeur', 'Heure', 'Agent', 'Adresse', 'Telephone', 'Societe', 'Vehicule', 'Type_Transport', 'Jour', 'Date_Reelle']
+            
+            if all(col in df_charge.columns for col in colonnes_requises):
+                self.df_chauffeurs = df_charge
+                st.session_state.chauffeurs_data = self.df_chauffeurs
+                # Sauvegarder en permanent
+                self.sauvegarder_donnees_permanentes()
+                return True
+            else:
+                st.error("❌ Le fichier ne contient pas les colonnes requises")
+                return False
+                
+        except Exception as e:
+            st.error(f"❌ Erreur lors du chargement du fichier: {e}")
+            return False
+    
     def get_info_agent(self, nom_agent):
-        """Récupère les informations d'un agent depuis info.xlsx ou les données complémentaires"""
-        info_par_defaut = {
-            "adresse": "Adresse non renseignée", 
-            "tel": "Tél non renseigné", 
-            "societe": "Société non renseignée", 
-            "voiture": "Non"
+        """Récupère les informations d'un agent"""
+        if self.df_info is None or self.df_info.empty:
+            return {"adresse": "Adresse non renseignée", "tel": "Tél non renseigné", "societe": "Société non renseignée", "voiture": "Non"}
+        
+        try:
+            nom_recherche = nom_agent.strip()
+            
+            for idx, row in self.df_info.iterrows():
+                nom_info = str(row.iloc[0]).strip() if len(row) > 0 else ""
+                
+                if nom_recherche == nom_info:
+                    a_voiture = "Non"
+                    if len(row) > 4:
+                        voiture_info = str(row.iloc[4]).strip().lower()
+                        if voiture_info in ['oui', 'yes', 'true', '1', 'x']:
+                            a_voiture = "Oui"
+                    
+                    return {
+                        "adresse": str(row.iloc[1]) if len(row) > 1 else "Adresse non renseignée",
+                        "tel": str(row.iloc[2]) if len(row) > 2 else "Tél non renseigné",
+                        "societe": str(row.iloc[3]) if len(row) > 3 else "Société non renseignée",
+                        "voiture": a_voiture
+                    }
+            
+            return {"adresse": "Adresse non renseignée", "tel": "Tél non renseigné", "societe": "Société non renseignée", "voiture": "Non"}
+            
+        except Exception as e:
+            return {"adresse": "Adresse non renseignée", "tel": "Tél non renseigné", "societe": "Société non renseignée", "voiture": "Non"}
+    
+    def get_liste_chauffeurs_voitures(self):
+        """Récupère la liste des chauffeurs depuis info.xlsx"""
+        if self.df_info is None or self.df_info.empty:
+            return []
+        
+        try:
+            chauffeurs_voitures = []
+            
+            for idx, row in self.df_info.iterrows():
+                if len(row) > 6:
+                    chauffeur = str(row.iloc[5]).strip() if pd.notna(row.iloc[5]) else ""
+                    voiture = str(row.iloc[6]).strip() if pd.notna(row.iloc[6]) else ""
+                    
+                    if chauffeur and chauffeur != "nan" and chauffeur != "":
+                        chauffeurs_voitures.append({
+                            'chauffeur': chauffeur,
+                            'voiture': voiture if voiture and voiture != "nan" else "Non renseigné"
+                        })
+            
+            return chauffeurs_voitures
+            
+        except Exception as e:
+            return []
+    
+    def extraire_dates_des_entetes(self, file):
+        """Extrait les dates depuis la 2ème ligne du fichier Excel"""
+        try:
+            # Lire les 2 premières lignes pour les en-têtes
+            df_entetes = pd.read_excel(file, nrows=2, header=None)
+            dates_par_jour = {}
+            
+            # Mapping des positions des colonnes vers les jours
+            positions_jours = {
+                1: 'Lundi', 2: 'Mardi', 3: 'Mercredi', 4: 'Jeudi', 
+                5: 'Vendredi', 6: 'Samedi', 7: 'Dimanche'
+            }
+            
+            # Parcourir les colonnes de jours
+            for col_index, jour_nom in positions_jours.items():
+                if col_index < len(df_entetes.columns):
+                    # Prendre la cellule de la DEUXIÈME ligne (ligne 1) qui contient les dates
+                    cellule = df_entetes.iloc[1, col_index]
+                    nom_colonne = str(cellule) if pd.notna(cellule) else ""
+                    
+                    # Chercher un motif date (jj/mm ou jj/mm/aaaa)
+                    match = re.search(r'(\d{1,2})[/-](\d{1,2})', nom_colonne)
+                    if match:
+                        jour = match.group(1)
+                        mois = match.group(2)
+                        
+                        # Déterminer l'année
+                        annee_courante = datetime.now().year
+                        mois_actuel = datetime.now().month
+                        
+                        if int(mois) < mois_actuel:
+                            annee_courante += 1
+                        
+                        date_trouvee = f"{jour.zfill(2)}/{mois.zfill(2)}/{annee_courante}"
+                        dates_par_jour[jour_nom] = date_trouvee
+                    else:
+                        # Date par défaut si non détectée
+                        date_par_defaut = self.calculer_date_par_defaut(jour_nom)
+                        dates_par_jour[jour_nom] = date_par_defaut
+            
+            return dates_par_jour
+            
+        except Exception as e:
+            return self.generer_dates_par_defaut()
+    
+    def calculer_date_par_defaut(self, jour_nom=None):
+        aujourd_hui = datetime.now()
+        jours_semaine = {
+            'Lundi': 0, 'Mardi': 1, 'Mercredi': 2, 'Jeudi': 3, 
+            'Vendredi': 4, 'Samedi': 5, 'Dimanche': 6
         }
         
-        # Chercher d'abord dans info.xlsx
-        if self.df_info is not None and not self.df_info.empty:
-            try:
-                nom_recherche = nom_agent.strip()
-                
-                for idx, row in self.df_info.iterrows():
-                    nom_info = str(row.iloc[0]).strip() if len(row) > 0 else ""
-                    
-                    if nom_recherche == nom_info:
-                        a_voiture = "Non"
-                        if len(row) > 4:
-                            voiture_info = str(row.iloc[4]).strip().lower()
-                            if voiture_info in ['oui', 'yes', 'true', '1', 'x']:
-                                a_voiture = "Oui"
-                        
-                        return {
-                            "adresse": str(row.iloc[1]) if len(row) > 1 else "Adresse non renseignée",
-                            "tel": str(row.iloc[2]) if len(row) > 2 else "Tél non renseigné",
-                            "societe": str(row.iloc[3]) if len(row) > 3 else "Société non renseignée",
-                            "voiture": a_voiture
-                        }
-            except:
-                pass
-        
-        # Chercher dans les informations complémentaires
-        if not self.df_info_complementaire.empty:
-            agent_trouve = self.df_info_complementaire[self.df_info_complementaire['Agent'] == nom_agent]
-            if not agent_trouve.empty:
-                return {
-                    "adresse": agent_trouve.iloc[0]['Adresse'] if pd.notna(agent_trouve.iloc[0]['Adresse']) else "Adresse non renseignée",
-                    "tel": agent_trouve.iloc[0]['Telephone'] if pd.notna(agent_trouve.iloc[0]['Telephone']) else "Tél non renseigné",
-                    "societe": agent_trouve.iloc[0]['Societe'] if pd.notna(agent_trouve.iloc[0]['Societe']) else "Société non renseignée",
-                    "voiture": "Non"
-                }
-        
-        return info_par_defaut
-    
-    def ajouter_info_agent(self, agent, adresse, telephone, societe):
-        """Ajoute ou met à jour les informations d'un agent"""
-        # Vérifier si l'agent existe déjà
-        if not self.df_info_complementaire.empty:
-            index_existant = self.df_info_complementaire[self.df_info_complementaire['Agent'] == agent].index
-            if not index_existant.empty:
-                # Mettre à jour
-                self.df_info_complementaire.at[index_existant[0], 'Adresse'] = adresse
-                self.df_info_complementaire.at[index_existant[0], 'Telephone'] = telephone
-                self.df_info_complementaire.at[index_existant[0], 'Societe'] = societe
+        if jour_nom and jour_nom in jours_semaine:
+            jour_cible = jours_semaine[jour_nom]
+            jour_actuel = aujourd_hui.weekday()
+            
+            if jour_cible >= jour_actuel:
+                decalage = jour_cible - jour_actuel
             else:
-                # Ajouter nouveau
-                nouvelle_info = pd.DataFrame({
-                    'Agent': [agent],
-                    'Adresse': [adresse],
-                    'Telephone': [telephone],
-                    'Societe': [societe]
-                })
-                self.df_info_complementaire = pd.concat([self.df_info_complementaire, nouvelle_info], ignore_index=True)
+                decalage = 7 - (jour_actuel - jour_cible)
+            
+            date_calculee = aujourd_hui + timedelta(days=decalage)
         else:
-            # Première ajout
-            self.df_info_complementaire = pd.DataFrame({
-                'Agent': [agent],
-                'Adresse': [adresse],
-                'Telephone': [telephone],
-                'Societe': [societe]
-            })
+            date_calculee = aujourd_hui
         
-        # Mettre à jour la session state
-        st.session_state.info_complementaire = self.df_info_complementaire
+        return date_calculee.strftime("%d/%m/%Y")
+    
+    def generer_dates_par_defaut(self):
+        aujourd_hui = datetime.now()
+        dates_par_defaut = {}
+        jours_ordre = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
         
-        # Sauvegarder
-        self.sauvegarder_donnees_permanentes()
+        jour_actuel = aujourd_hui.weekday()
+        jours_vers_lundi = (0 - jour_actuel) % 7
+        date_debut = aujourd_hui + timedelta(days=jours_vers_lundi)
+        
+        for i, jour in enumerate(jours_ordre):
+            date_jour = date_debut + timedelta(days=i)
+            dates_par_defaut[jour] = date_jour.strftime("%d/%m/%Y")
+        
+        return dates_par_defaut
+    
+    def get_date_du_jour(self, jour_nom):
+        return self.dates_par_jour.get(jour_nom, self.calculer_date_par_defaut(jour_nom))
+    
+    def ajuster_heure_ete(self, heure, heure_ete_active):
+        return heure - 1 if heure_ete_active else heure
+
+    def extraire_heures(self, planning_str):
+        """Extrait les heures de début et fin d'un planning - VERSION CORRIGÉE"""
+        if pd.isna(planning_str) or planning_str in ['REPOS', 'ABSENCE', 'OFF', 'MALADIE', 'CONGÉ PAYÉ', 'CONGÉ MATERNITÉ']:
+            return None, None
+        
+        texte = str(planning_str).strip()
+        
+        # Nettoyer le texte
+        texte = re.sub(r'[^\dh\s\-à]', ' ', texte)
+        texte = re.sub(r'\s+', ' ', texte)
+        
+        # Pattern pour formats: 7h-16h, 7h-16h, 14h-23h, etc.
+        pattern_principal = r'(\d{1,2})h?\s*[\-à]\s*(\d{1,2})h?'
+        match = re.search(pattern_principal, texte)
+        
+        if match:
+            heure_debut = int(match.group(1))
+            heure_fin = int(match.group(2))
+            
+            # Ajuster les heures de fin après minuit
+            if heure_fin < heure_debut and heure_fin < 12:
+                heure_fin += 24
+            
+            return heure_debut, heure_fin
+        
+        return None, None
+    
+    def traiter_donnees(self, heure_ete_active, jour_selectionne, heures_ramassage_selectionnees, heures_depart_selectionnees):
+        """Traite les données du fichier Excel - VERSION CORRIGÉE"""
+        if self.df is None:
+            return
+        
+        self.liste_ramassage_actuelle = []
+        self.liste_depart_actuelle = []
+        
+        jours_mapping = {
+            'Lundi': 'Lundi', 'Mardi': 'Mardi', 'Mercredi': 'Mercredi', 
+            'Jeudi': 'Jeudi', 'Vendredi': 'Vendredi', 'Samedi': 'Samedi', 'Dimanche': 'Dimanche'
+        }
+        
+        for _, agent in self.df.iterrows():
+            nom_agent = agent['Salarie']
+            info_agent = self.get_info_agent(nom_agent)
+            
+            # DEBUG: Vérifier les agents exclus
+            if info_agent['voiture'] == "Oui":
+                continue
+            
+            jours_a_verifier = []
+            if jour_selectionne == 'Tous':
+                for jour_col, jour_nom in jours_mapping.items():
+                    jours_a_verifier.append((jour_col, jour_nom))
+            else:
+                jours_a_verifier.append((jour_selectionne, jour_selectionne))
+            
+            for jour_col, jour_nom in jours_a_verifier:
+                planning = agent[jour_col]
+                heure_debut, heure_fin = self.extraire_heures(planning)
+                
+                if heure_debut is not None and heure_fin is not None:
+                    # Appliquer ajustement heure d'été si nécessaire
+                    if heure_ete_active:
+                        heure_debut_ajustee = self.ajuster_heure_ete(heure_debut, heure_ete_active)
+                        heure_fin_ajustee = self.ajuster_heure_ete(heure_fin, heure_ete_active)
+                    else:
+                        heure_debut_ajustee = heure_debut
+                        heure_fin_ajustee = heure_fin
+                    
+                    # RAMASSAGE - vérifier l'heure de début
+                    if heure_debut_ajustee in heures_ramassage_selectionnees:
+                        agent_data = {
+                            'Agent': nom_agent,
+                            'Jour': jour_nom,
+                            'Heure': heure_debut_ajustee,
+                            'Heure_affichage': f"{heure_debut_ajustee}h",
+                            'Adresse': info_agent['adresse'],
+                            'Telephone': info_agent['tel'],
+                            'Societe': info_agent['societe'],
+                            'Voiture': info_agent['voiture'],
+                            'Date_Reelle': self.get_date_du_jour(jour_nom)
+                        }
+                        self.liste_ramassage_actuelle.append(agent_data)
+                    
+                    # DÉPART - vérifier l'heure de fin
+                    heure_fin_comparaison = heure_fin_ajustee
+                    if heure_fin_comparaison >= 24:
+                        heure_fin_comparaison = heure_fin_comparaison - 24
+                    
+                    if heure_fin_comparaison in heures_depart_selectionnees:
+                        heure_fin_affichee = heure_fin_ajustee
+                        if heure_fin_ajustee >= 24:
+                            heure_fin_affichee = heure_fin_ajustee - 24
+                        
+                        agent_data = {
+                            'Agent': nom_agent,
+                            'Jour': jour_nom,
+                            'Heure': heure_fin_ajustee,
+                            'Heure_affichage': f"{heure_fin_affichee}h",
+                            'Adresse': info_agent['adresse'],
+                            'Telephone': info_agent['tel'],
+                            'Societe': info_agent['societe'],
+                            'Voiture': info_agent['voiture'],
+                            'Date_Reelle': self.get_date_du_jour(jour_nom)
+                        }
+                        self.liste_depart_actuelle.append(agent_data)
+        
+        # Trier par jour (dans l'ordre de la semaine) puis par heure
+        ordre_jours = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
+        self.liste_ramassage_actuelle.sort(key=lambda x: (ordre_jours.index(x['Jour']), x['Heure']))
+        self.liste_depart_actuelle.sort(key=lambda x: (ordre_jours.index(x['Jour']), x['Heure']))
     
     def get_prix_course(self, chauffeur, type_transport):
         """Retourne le prix d'une course selon le type de chauffeur"""
@@ -227,6 +420,119 @@ class GestionTransportWeb:
         
         # Sauvegarder en permanent
         self.sauvegarder_donnees_permanentes()
+    
+    def supprimer_affectation(self, index):
+        """Supprime une affectation"""
+        self.df_chauffeurs = self.df_chauffeurs.drop(index).reset_index(drop=True)
+        st.session_state.chauffeurs_data = self.df_chauffeurs
+        
+        # Sauvegarder en permanent
+        self.sauvegarder_donnees_permanentes()
+
+    def supprimer_toutes_affectations(self):
+        """Supprime toutes les affectations"""
+        self.df_chauffeurs = pd.DataFrame(columns=[
+            'Chauffeur', 'Heure', 'Agent', 'Adresse', 'Telephone', 'Societe', 
+            'Vehicule', 'Type_Transport', 'Jour', 'Date_Ajout', 'Date_Reelle',
+            'Prix_Course', 'Statut_Paiement'
+        ])
+        st.session_state.chauffeurs_data = self.df_chauffeurs
+        
+        # Sauvegarder en permanent
+        self.sauvegarder_donnees_permanentes()
+        st.success("✅ Toutes les affectations ont été supprimées")
+
+    def separer_chauffeurs_taxi(self, df_filtre):
+        """Sépare les chauffeurs Taxi des autres chauffeurs"""
+        chauffeurs_taxi = df_filtre[df_filtre['Chauffeur'].str.contains('taxi|Taxi|TAXI', na=False)]
+        chauffeurs_autres = df_filtre[~df_filtre['Chauffeur'].str.contains('taxi|Taxi|TAXI', na=False)]
+        
+        return chauffeurs_taxi, chauffeurs_autres
+    
+    def calculer_statistiques_mensuelles(self, mois=None, annee=None):
+        """Calcule les statistiques mensuelles pour la paie"""
+        if self.df_chauffeurs.empty:
+            return None
+        
+        # Filtrer par mois/année si spécifié
+        df_filtre = self.df_chauffeurs.copy()
+        
+        if mois and annee:
+            # Convertir Date_Reelle en datetime pour filtrage
+            try:
+                df_filtre['Date_Reelle_DT'] = pd.to_datetime(df_filtre['Date_Reelle'], format='%d/%m/%Y', errors='coerce')
+                df_filtre = df_filtre[
+                    (df_filtre['Date_Reelle_DT'].dt.month == mois) & 
+                    (df_filtre['Date_Reelle_DT'].dt.year == annee)
+                ]
+            except:
+                pass
+        
+        if df_filtre.empty:
+            return None
+        
+        # Séparer Taxi des autres chauffeurs
+        chauffeurs_taxi, chauffeurs_autres = self.separer_chauffeurs_taxi(df_filtre)
+        
+        statistiques = {
+            'periode': f"{mois}/{annee}" if mois and annee else "Toutes périodes",
+            'total_courses': 0,
+            'chauffeurs_normaux': {},
+            'chauffeurs_taxi': {},
+            'societes_normaux': {},
+            'societes_taxi': {},
+            'details_courses': []
+        }
+        
+        # Compter les courses pour les chauffeurs normaux
+        if not chauffeurs_autres.empty:
+            # Grouper par chauffeur et compter les courses uniques (basées sur heure + date)
+            courses_chauffeurs_normaux = chauffeurs_autres.groupby(['Chauffeur', 'Heure', 'Date_Reelle']).size()
+            
+            for (chauffeur, heure, date_reelle), nb_personnes in courses_chauffeurs_normaux.items():
+                if chauffeur not in statistiques['chauffeurs_normaux']:
+                    statistiques['chauffeurs_normaux'][chauffeur] = 0
+                statistiques['chauffeurs_normaux'][chauffeur] += 1
+                statistiques['total_courses'] += 1
+                
+                # Compter par société pour cette course
+                course_data = chauffeurs_autres[
+                    (chauffeurs_autres['Chauffeur'] == chauffeur) & 
+                    (chauffeurs_autres['Heure'] == heure) & 
+                    (chauffeurs_autres['Date_Reelle'] == date_reelle)
+                ]
+                
+                societes_course = course_data['Societe'].value_counts().to_dict()
+                for societe, count in societes_course.items():
+                    if societe not in statistiques['societes_normaux']:
+                        statistiques['societes_normaux'][societe] = 0
+                    statistiques['societes_normaux'][societe] += count
+        
+        # Compter les courses pour les Taxi
+        if not chauffeurs_taxi.empty:
+            # Grouper par chauffeur taxi et compter les courses
+            courses_chauffeurs_taxi = chauffeurs_taxi.groupby(['Chauffeur', 'Heure', 'Date_Reelle']).size()
+            
+            for (chauffeur, heure, date_reelle), nb_personnes in courses_chauffeurs_taxi.items():
+                if chauffeur not in statistiques['chauffeurs_taxi']:
+                    statistiques['chauffeurs_taxi'][chauffeur] = 0
+                statistiques['chauffeurs_taxi'][chauffeur] += 1
+                statistiques['total_courses'] += 1
+                
+                # Compter par société pour cette course
+                course_data = chauffeurs_taxi[
+                    (chauffeurs_taxi['Chauffeur'] == chauffeur) & 
+                    (chauffeurs_taxi['Heure'] == heure) & 
+                    (chauffeurs_taxi['Date_Reelle'] == date_reelle)
+                ]
+                
+                societes_course = course_data['Societe'].value_counts().to_dict()
+                for societe, count in societes_course.items():
+                    if societe not in statistiques['societes_taxi']:
+                        statistiques['societes_taxi'][societe] = 0
+                    statistiques['societes_taxi'][societe] += count
+        
+        return statistiques
     
     def calculer_paiements_mensuels(self, mois=None, annee=None):
         """Calcule les paiements mensuels détaillés"""
@@ -346,9 +652,8 @@ class GestionTransportWeb:
         
         return pd.DataFrame(donnees_rapport)
 
-    # Les autres méthodes restent similaires mais avec l'ajout du prix dans l'export
     def exporter_suivi_chauffeurs(self, jour_selectionne_export):
-        """Exporte le suivi des chauffeurs avec statistiques complètes et prix"""
+        """Exporte le suivi des chauffeurs avec statistiques complètes et mise en forme"""
         if self.df_chauffeurs.empty:
             return None
         
@@ -360,20 +665,206 @@ class GestionTransportWeb:
         if df_filtre.empty:
             return None
         
-        # Le reste de la méthode reste similaire mais avec l'ajout des colonnes de prix
-        # ... (le code existant de la méthode)
+        # Séparer Taxi des autres chauffeurs
+        chauffeurs_taxi, chauffeurs_autres = self.separer_chauffeurs_taxi(df_filtre)
         
-        # Ajouter les informations de prix dans l'export
         donnees_export = []
+        
+        # Style d'en-tête avec prix
         entete_style = ["Salarié", "HEURE", "CHAUFFEUR", "DESTINATION", "Plateau", "type", "date", "Prix"]
         donnees_export.append(entete_style)
+        donnees_export.append(["", "", "", "", "", "", "", ""])
         
-        # ... (le reste du code d'export existant)
+        # Traiter d'abord les chauffeurs normaux
+        if not chauffeurs_autres.empty:
+            donnees_export.append(["🚗 CHAUFFEURS NORMAUX", "", "", "", "", "", "", ""])
+            donnees_export.append(["", "", "", "", "", "", "", ""])
+            
+            total_courses_normaux = 0
+            statistiques_societes_normaux = {}
+            statistiques_chauffeurs_normaux = {}
+            
+            # Grouper par jour, chauffeur, heure et type
+            groupes = chauffeurs_autres.groupby(['Jour', 'Chauffeur', 'Heure', 'Type_Transport', 'Date_Reelle'])
+            
+            # Trier par date, puis chauffeur, puis heure
+            ordre_jours = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
+            groupes_tries = sorted(groupes, key=lambda x: (
+                x[0][4],  # Date_Reelle
+                ordre_jours.index(x[0][0]),
+                x[0][1], 
+                x[0][2]
+            ))
+            
+            for (jour, chauffeur, heure, type_transport, date_reelle), groupe in groupes_tries:
+                nb_personnes_course = len(groupe)
+                societes_course = {}
+                
+                # Compter par chauffeur
+                if chauffeur not in statistiques_chauffeurs_normaux:
+                    statistiques_chauffeurs_normaux[chauffeur] = 0
+                statistiques_chauffeurs_normaux[chauffeur] += 1
+                
+                # Ajouter chaque agent
+                for idx, (_, ligne) in enumerate(groupe.iterrows()):
+                    societe = ligne['Societe']
+                    if societe not in societes_course:
+                        societes_course[societe] = 0
+                    societes_course[societe] += 1
+                    
+                    if societe not in statistiques_societes_normaux:
+                        statistiques_societes_normaux[societe] = 0
+                    statistiques_societes_normaux[societe] += 1
+                    
+                    donnees_export.append([
+                        ligne['Agent'], f"{heure}", chauffeur, ligne['Adresse'],
+                        societe, type_transport.lower(), date_reelle, f"{ligne['Prix_Course']} €"
+                    ])
+                
+                # Ajouter les statistiques de la course
+                if societes_course:
+                    pourcentages = []
+                    for societe, count in societes_course.items():
+                        pourcentage = (count / nb_personnes_course) * 100
+                        pourcentages.append(f"{pourcentage:.0f}% {societe}")
+                    
+                    texte_pourcentages = " + ".join(pourcentages)
+                    donnees_export.append([
+                        f"RÉPARTITION COURSE ({nb_personnes_course} pers.)", "", "", texte_pourcentages, "", "", "", ""
+                    ])
+            
+                total_courses_normaux += 1
+                donnees_export.append(["", "", "", "", "", "", "", ""])
+        
+        # Traiter les chauffeurs Taxi
+        if not chauffeurs_taxi.empty:
+            donnees_export.append(["🚕 CHAUFFEURS TAXI", "", "", "", "", "", "", ""])
+            donnees_export.append(["", "", "", "", "", "", "", ""])
+            
+            total_courses_taxi = 0
+            statistiques_societes_taxi = {}
+            statistiques_chauffeurs_taxi = {}
+            
+            # Grouper correctement les courses Taxi
+            groupes_taxi = chauffeurs_taxi.groupby(['Chauffeur', 'Heure', 'Type_Transport', 'Jour', 'Date_Reelle'])
+            
+            # Trier par date, chauffeur, puis heure
+            groupes_taxi_tries = sorted(groupes_taxi, key=lambda x: (
+                x[0][4],  # Date_Reelle
+                x[0][0],  # Chauffeur
+                x[0][1],  # Heure
+            ))
+            
+            for (chauffeur, heure, type_transport, jour, date_reelle), groupe in groupes_taxi_tries:
+                nb_personnes_course = len(groupe)
+                societes_course = {}
+                
+                # Compter correctement les chauffeurs taxi
+                if chauffeur not in statistiques_chauffeurs_taxi:
+                    statistiques_chauffeurs_taxi[chauffeur] = 0
+                statistiques_chauffeurs_taxi[chauffeur] += 1
+                
+                # Ajouter chaque agent
+                for idx, (_, ligne) in enumerate(groupe.iterrows()):
+                    societe = ligne['Societe']
+                    if societe not in societes_course:
+                        societes_course[societe] = 0
+                    societes_course[societe] += 1
+                    
+                    if societe not in statistiques_societes_taxi:
+                        statistiques_societes_taxi[societe] = 0
+                    statistiques_societes_taxi[societe] += 1
+                    
+                    donnees_export.append([
+                        ligne['Agent'], f"{heure}", chauffeur, ligne['Adresse'],
+                        societe, type_transport.lower(), date_reelle, f"{ligne['Prix_Course']} €"
+                    ])
+                
+                # Ajouter les statistiques de la course
+                if societes_course:
+                    pourcentages = []
+                    for societe, count in societes_course.items():
+                        pourcentage = (count / nb_personnes_course) * 100
+                        pourcentages.append(f"{pourcentage:.0f}% {societe}")
+                    
+                    texte_pourcentages = " + ".join(pourcentages)
+                    donnees_export.append([
+                        f"RÉPARTITION COURSE TAXI ({nb_personnes_course} pers.)", "", "", texte_pourcentages, "", "", "", ""
+                    ])
+                
+                total_courses_taxi += 1
+                donnees_export.append(["", "", "", "", "", "", "", ""])
+        
+        # Supprimer les lignes vides en double à la fin
+        while len(donnees_export) > 1 and donnees_export[-1] == ["", "", "", "", "", "", "", ""]:
+            donnees_export.pop()
+        
+        # STATISTIQUES GLOBALES AVEC PRIX
+        donnees_export.append(["STATISTIQUES GLOBALES", "", "", "", "", "", "", ""])
+        
+        # Statistiques pour chauffeurs normaux
+        if not chauffeurs_autres.empty:
+            donnees_export.append(["🚗 CHAUFFEURS NORMAUX", "", "", "", "", "", "", ""])
+            donnees_export.append([f"Total des courses normales: {total_courses_normaux}", "", "", "", "", "", "", ""])
+            donnees_export.append([f"Prix unitaire: {self.prix_course_chauffeur} €", "", "", "", "", "", "", ""])
+            
+            # Statistiques par chauffeur normaux
+            donnees_export.append(["📊 PAR CHAUFFEUR NORMAL", "", "", "", "", "", "", ""])
+            for chauffeur, nb_courses in sorted(statistiques_chauffeurs_normaux.items(), key=lambda x: x[1], reverse=True):
+                pourcentage_chauffeur = (nb_courses / total_courses_normaux * 100) if total_courses_normaux > 0 else 0
+                montant_chauffeur = nb_courses * self.prix_course_chauffeur
+                donnees_export.append([
+                    "", "", f"{chauffeur}: {nb_courses} courses ({pourcentage_chauffeur:.1f}%) - {montant_chauffeur} €", "", "", "", "", ""
+                ])
+            
+            # Statistiques par société normaux
+            donnees_export.append(["🏢 PAR SOCIÉTÉ NORMALE", "", "", "", "", "", "", ""])
+            total_personnes_normaux = sum(statistiques_societes_normaux.values())
+            for societe, count in sorted(statistiques_societes_normaux.items(), key=lambda x: x[1], reverse=True):
+                pourcentage_global = (count / total_personnes_normaux * 100) if total_personnes_normaux > 0 else 0
+                donnees_export.append([
+                    "", "", "", f"{societe}: {count} personnes ({pourcentage_global:.1f}%)", "", "", "", ""
+                ])
+        
+        # Statistiques pour Taxi
+        if not chauffeurs_taxi.empty:
+            donnees_export.append(["🚕 CHAUFFEURS TAXI", "", "", "", "", "", "", ""])
+            donnees_export.append([f"Total des courses taxi: {total_courses_taxi}", "", "", "", "", "", "", ""])
+            donnees_export.append([f"Prix unitaire: {self.prix_course_taxi} €", "", "", "", "", "", "", ""])
+            
+            # Statistiques par chauffeur taxi
+            donnees_export.append(["📊 PAR CHAUFFEUR TAXI", "", "", "", "", "", "", ""])
+            for chauffeur, nb_courses in sorted(statistiques_chauffeurs_taxi.items(), key=lambda x: x[1], reverse=True):
+                pourcentage_chauffeur = (nb_courses / total_courses_taxi * 100) if total_courses_taxi > 0 else 0
+                montant_chauffeur = nb_courses * self.prix_course_taxi
+                donnees_export.append([
+                    "", "", f"{chauffeur}: {nb_courses} courses ({pourcentage_chauffeur:.1f}%) - {montant_chauffeur} €", "", "", "", "", ""
+                ])
+            
+            # Statistiques par société taxi
+            donnees_export.append(["🏢 PAR SOCIÉTÉ TAXI", "", "", "", "", "", "", ""])
+            total_personnes_taxi = sum(statistiques_societes_taxi.values())
+            for societe, count in sorted(statistiques_societes_taxi.items(), key=lambda x: x[1], reverse=True):
+                pourcentage_global = (count / total_personnes_taxi * 100) if total_personnes_taxi > 0 else 0
+                donnees_export.append([
+                    "", "", "", f"{societe}: {count} personnes ({pourcentage_global:.1f}%)", "", "", "", ""
+                ])
+        
+        # RÉSUMÉ FINAL SIMPLIFIÉ
+        donnees_export.append(["", "", "", "", "", "", "", ""])
+        donnees_export.append(["RÉSUMÉ FINAL", "", "", "", "", "", "", ""])
+        total_courses_global = total_courses_normaux + total_courses_taxi
+        total_personnes_global = (sum(statistiques_societes_normaux.values()) if not chauffeurs_autres.empty else 0) + (sum(statistiques_societes_taxi.values()) if not chauffeurs_taxi.empty else 0)
+        total_montant_global = (total_courses_normaux * self.prix_course_chauffeur) + (total_courses_taxi * self.prix_course_taxi)
+        
+        donnees_export.append([f"Total courses toutes catégories: {total_courses_global}", "", "", "", "", "", "", ""])
+        donnees_export.append([f"Total personnes transportées: {total_personnes_global}", "", "", "", "", "", "", ""])
+        donnees_export.append([f"TOTAL MONTAANT À PAYER: {total_montant_global} €", "", "", "", "", "", "", ""])
         
         return pd.DataFrame(donnees_export)
 
-    # Les autres méthodes existantes (traiter_donnees, extraire_heures, etc.) restent inchangées
-    # ... (inclure toutes les autres méthodes de la classe précédente)
+    # Les autres méthodes (generer_rapport_imprimable, generer_pdf_imprimable) restent similaires
+    # ... (inclure les autres méthodes existantes)
 
 def main():
     st.set_page_config(
@@ -571,15 +1062,111 @@ def main():
         gestion.traiter_donnees(heure_ete_active, jour_selectionne, heures_ramassage, heures_depart)
         
         # Onglets
-        tab1, tab2, tab3, tab4, tab5 = st.tabs(["🚗 Liste de Ramassage", "🚙 Liste de Départ", "👨‍✈️ Gestion Chauffeurs", "💰 Rapport de Paie", "👤 Gestion Agents"])
+        tab1, tab2, tab3, tab4 = st.tabs(["🚗 Liste de Ramassage", "🚙 Liste de Départ", "👨‍✈️ Gestion Chauffeurs", "💰 Rapport de Paie"])
         
         with tab1:
-            # ... (contenu existant de l'onglet Ramassage)
-            pass
+            st.markdown('<h2 class="section-header">📋 Liste de Ramassage</h2>', unsafe_allow_html=True)
+            
+            # Boutons Imprimer
+            col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 2])
+            with col_btn1:
+                if st.button("📄 Excel Imprimable", type="primary"):
+                    rapport = gestion.generer_rapport_imprimable("ramassage", jour_selectionne)
+                    if rapport is not None:
+                        output = BytesIO()
+                        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                            rapport.to_excel(writer, sheet_name='Liste_Ramassage', index=False, header=False)
+                        
+                        st.download_button(
+                            label="📥 Télécharger Excel",
+                            data=output.getvalue(),
+                            file_name=f"Liste_Ramassage_{datetime.now().strftime('%d%m%Y_%H%M')}.xlsx",
+                            mime="application/vnd.ms-excel"
+                        )
+                    else:
+                        st.warning("Aucune donnée à imprimer")
+            
+            with col_btn2:
+                if st.button("📊 PDF Imprimable", type="secondary"):
+                    pdf_data = gestion.generer_pdf_imprimable("ramassage", jour_selectionne)
+                    if pdf_data is not None:
+                        st.download_button(
+                            label="📥 Télécharger PDF",
+                            data=pdf_data,
+                            file_name=f"Liste_Ramassage_{datetime.now().strftime('%d%m%Y_%H%M')}.pdf",
+                            mime="application/pdf"
+                        )
+                    else:
+                        st.warning("Aucune donnée à imprimer")
+            
+            if gestion.liste_ramassage_actuelle:
+                mode_heure = "HEURE D'ÉTÉ" if heure_ete_active else "HEURE NORMALE"
+                st.write(f"**Mode:** {mode_heure} | **Jours:** {jour_selectionne} | **Heures:** {', '.join([f'{h}h' for h in heures_ramassage])}")
+                
+                # Afficher par jour dans l'ordre
+                ordre_jours = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
+                for jour in ordre_jours:
+                    agents_du_jour = [a for a in gestion.liste_ramassage_actuelle if a['Jour'] == jour]
+                    if agents_du_jour and (jour_selectionne == 'Tous' or jour == jour_selectionne):
+                        date_jour = gestion.get_date_du_jour(jour)
+                        st.subheader(f"📅 {jour} ({date_jour})")
+                        
+                        df_affiche = pd.DataFrame(agents_du_jour)[['Agent', 'Heure_affichage', 'Adresse', 'Telephone', 'Societe']]
+                        st.dataframe(df_affiche, use_container_width=True)
+            else:
+                st.info("ℹ️ Aucun agent trouvé avec les filtres sélectionnés")
         
         with tab2:
-            # ... (contenu existant de l'onglet Départ)
-            pass
+            st.markdown('<h2 class="section-header">📋 Liste de Départ</h2>', unsafe_allow_html=True)
+            
+            # Boutons Imprimer
+            col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 2])
+            with col_btn1:
+                if st.button("📄 Excel Imprimable", type="primary", key="excel_depart"):
+                    rapport = gestion.generer_rapport_imprimable("depart", jour_selectionne)
+                    if rapport is not None:
+                        output = BytesIO()
+                        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                            rapport.to_excel(writer, sheet_name='Liste_Depart', index=False, header=False)
+                        
+                        st.download_button(
+                            label="📥 Télécharger Excel",
+                            data=output.getvalue(),
+                            file_name=f"Liste_Depart_{datetime.now().strftime('%d%m%Y_%H%M')}.xlsx",
+                            mime="application/vnd.ms-excel"
+                        )
+                    else:
+                        st.warning("Aucune donnée à imprimer")
+            
+            with col_btn2:
+                if st.button("📊 PDF Imprimable", type="secondary", key="pdf_depart"):
+                    pdf_data = gestion.generer_pdf_imprimable("depart", jour_selectionne)
+                    if pdf_data is not None:
+                        st.download_button(
+                            label="📥 Télécharger PDF",
+                            data=pdf_data,
+                            file_name=f"Liste_Depart_{datetime.now().strftime('%d%m%Y_%H%M')}.pdf",
+                            mime="application/pdf"
+                        )
+                    else:
+                        st.warning("Aucune donnée à imprimer")
+            
+            if gestion.liste_depart_actuelle:
+                mode_heure = "HEURE D'ÉTÉ" if heure_ete_active else "HEURE NORMALE"
+                st.write(f"**Mode:** {mode_heure} | **Jours:** {jour_selectionne} | **Heures:** {', '.join([f'{h}h' for h in heures_depart])}")
+                
+                # Afficher par jour dans l'ordre
+                ordre_jours = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
+                for jour in ordre_jours:
+                    agents_du_jour = [a for a in gestion.liste_depart_actuelle if a['Jour'] == jour]
+                    if agents_du_jour and (jour_selectionne == 'Tous' or jour == jour_selectionne):
+                        date_jour = gestion.get_date_du_jour(jour)
+                        st.subheader(f"📅 {jour} ({date_jour})")
+                        
+                        df_affiche = pd.DataFrame(agents_du_jour)[['Agent', 'Heure_affichage', 'Adresse', 'Telephone', 'Societe']]
+                        st.dataframe(df_affiche, use_container_width=True)
+            else:
+                st.info("ℹ️ Aucun agent trouvé avec les filtres sélectionnés")
         
         with tab3:
             st.markdown('<h2 class="section-header">👨‍✈️ Gestion des Chauffeurs</h2>', unsafe_allow_html=True)
@@ -804,58 +1391,6 @@ def main():
                         st.metric("Dont taxis", f"{total_taxi_glob} €")
             else:
                 st.info("Aucune statistique disponible - Ajoutez des affectations d'abord")
-        
-        with tab5:
-            st.markdown('<h2 class="section-header">👤 Gestion des Informations Agents</h2>', unsafe_allow_html=True)
-            
-            st.info("ℹ️ Ajoutez ou modifiez les informations des agents manquantes dans info.xlsx")
-            
-            col_ajout, col_liste = st.columns([1, 2])
-            
-            with col_ajout:
-                st.subheader("➕ Ajouter/Modifier un Agent")
-                
-                # Liste des agents disponibles
-                tous_agents = sorted(list(set(gestion.df['Salarie'].tolist()))) if gestion.df is not None else []
-                agent_selectionne = st.selectbox("Sélectionner un agent", tous_agents)
-                
-                if agent_selectionne:
-                    # Charger les informations existantes
-                    info_existant = gestion.get_info_agent(agent_selectionne)
-                    
-                    adresse = st.text_input("Adresse", value=info_existant['adresse'] if info_existant['adresse'] != "Adresse non renseignée" else "")
-                    telephone = st.text_input("Téléphone", value=info_existant['tel'] if info_existant['tel'] != "Tél non renseigné" else "")
-                    societe = st.text_input("Société/Plateau", value=info_existant['societe'] if info_existant['societe'] != "Société non renseignée" else "")
-                    
-                    if st.button("💾 Sauvegarder les informations", type="primary"):
-                        if agent_selectionne:
-                            gestion.ajouter_info_agent(agent_selectionne, adresse, telephone, societe)
-                            st.success(f"✅ Informations sauvegardées pour {agent_selectionne}")
-                            st.rerun()
-            
-            with col_liste:
-                st.subheader("📋 Agents avec informations manquantes")
-                
-                if gestion.df is not None:
-                    agents_manquants = []
-                    for agent in gestion.df['Salarie'].unique():
-                        info = gestion.get_info_agent(agent)
-                        if any([info['adresse'] == "Adresse non renseignée", 
-                               info['tel'] == "Tél non renseigné", 
-                               info['societe'] == "Société non renseignée"]):
-                            agents_manquants.append({
-                                'Agent': agent,
-                                'Adresse': info['adresse'],
-                                'Telephone': info['tel'],
-                                'Societe': info['societe']
-                            })
-                    
-                    if agents_manquants:
-                        st.write(f"**{len(agents_manquants)} agents avec des informations manquantes:**")
-                        df_manquants = pd.DataFrame(agents_manquants)
-                        st.dataframe(df_manquants, use_container_width=True)
-                    else:
-                        st.success("✅ Tous les agents ont des informations complètes")
     
     else:
         st.info("👈 Veuillez sélectionner un fichier Excel dans la barre latérale pour commencer")
