@@ -981,16 +981,16 @@ def main():
         with st.container():
             st.markdown('<div class="price-config">', unsafe_allow_html=True)
             gestion.prix_course_chauffeur = st.number_input(
-                "Prix course chauffeur normal (€)", 
+                "Prix course chauffeur normal (DNT)", 
                 min_value=0.0, 
-                value=10.0, 
+                value=19.0, 
                 step=0.5,
                 help="Prix par course pour les chauffeurs normaux"
             )
             gestion.prix_course_taxi = st.number_input(
                 "Prix course taxi (€)", 
                 min_value=0.0, 
-                value=15.0, 
+                value=23.0, 
                 step=0.5,
                 help="Prix par course pour les taxis"
             )
@@ -1397,4 +1397,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
