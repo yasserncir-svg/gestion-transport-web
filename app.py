@@ -18,16 +18,19 @@ class GestionTransportWeb:
     def __init__(self):
         self.df = None
         self.df_info = None
-        self.df_chauffeurs = None
         self.dates_par_jour = {}
         self.liste_ramassage_actuelle = []
         self.liste_depart_actuelle = []
         
-        # Initialiser l'état de session
+        # Initialiser l'état de session pour les chauffeurs
         if 'chauffeurs_data' not in st.session_state:
             st.session_state.chauffeurs_data = pd.DataFrame(columns=[
                 'Chauffeur', 'Heure', 'Agent', 'Adresse', 'Telephone', 'Societe', 'Vehicule', 'Type_Transport', 'Jour'
             ])
+        
+        # Initialiser l'état pour le fichier actuel
+        if 'current_file_hash' not in st.session_state:
+            st.session_state.current_file_hash = None
         
         self.df_chauffeurs = st.session_state.chauffeurs_data
         self.charger_infos_agents()
@@ -329,12 +332,21 @@ class GestionTransportWeb:
             nouvelle_ligne = pd.DataFrame([nouvelle_affectation])
             self.df_chauffeurs = pd.concat([self.df_chauffeurs, nouvelle_ligne], ignore_index=True)
         
+        # Mettre à jour la session state
         st.session_state.chauffeurs_data = self.df_chauffeurs
     
     def supprimer_affectation(self, index):
         """Supprime une affectation"""
         self.df_chauffeurs = self.df_chauffeurs.drop(index).reset_index(drop=True)
         st.session_state.chauffeurs_data = self.df_chauffeurs
+
+    def supprimer_toutes_affectations(self):
+        """Supprime toutes les affectations"""
+        self.df_chauffeurs = pd.DataFrame(columns=[
+            'Chauffeur', 'Heure', 'Agent', 'Adresse', 'Telephone', 'Societe', 'Vehicule', 'Type_Transport', 'Jour'
+        ])
+        st.session_state.chauffeurs_data = self.df_chauffeurs
+        st.success("✅ Toutes les affectations ont été supprimées")
 
     def separer_chauffeurs_taxi(self, df_filtre):
         """Sépare les chauffeurs Taxi des autres chauffeurs"""
@@ -764,6 +776,13 @@ def main():
             border: 1px solid #c3e6cb;
             color: #155724;
         }
+        .warning-box {
+            padding: 1rem;
+            border-radius: 0.5rem;
+            background-color: #fff3cd;
+            border: 1px solid #ffeaa7;
+            color: #856404;
+        }
         .print-button {
             background-color: #28a745;
             color: white;
@@ -789,6 +808,14 @@ def main():
         
         if uploaded_file:
             try:
+                # Vérifier si le fichier a changé
+                current_file_hash = hash(uploaded_file.getvalue())
+                file_changed = st.session_state.current_file_hash != current_file_hash
+                
+                if file_changed:
+                    st.session_state.current_file_hash = current_file_hash
+                    st.info("🔄 Nouveau fichier détecté")
+                
                 # Charger les données en sautant les 2 premières lignes d'en-tête
                 gestion.df = pd.read_excel(uploaded_file, skiprows=2)
                 
@@ -837,6 +864,20 @@ def main():
             heure_01h = st.checkbox("01h", value=True, key="d1")
             heure_02h = st.checkbox("02h", value=True, key="d2")
             heure_03h = st.checkbox("03h", value=True, key="d3")
+        
+        # Section gestion des affectations
+        st.header("💾 Gestion des Données")
+        st.markdown("---")
+        
+        # Afficher le nombre d'affectations actuelles
+        nb_affectations = len(st.session_state.chauffeurs_data)
+        st.write(f"**Affectations enregistrées :** {nb_affectations}")
+        
+        # Bouton pour supprimer toutes les affectations
+        if nb_affectations > 0:
+            if st.button("🗑️ Supprimer TOUTES les affectations", type="secondary"):
+                gestion.supprimer_toutes_affectations()
+                st.rerun()
     
     # Contenu principal
     if gestion.df is not None:
@@ -967,6 +1008,22 @@ def main():
         
         with tab3:
             st.markdown('<h2 class="section-header">👨‍✈️ Gestion des Chauffeurs</h2>', unsafe_allow_html=True)
+            
+            # Bannière d'information sur la persistance
+            if len(st.session_state.chauffeurs_data) > 0:
+                st.markdown(f"""
+                <div class="success-box">
+                ✅ <strong>Données persistantes</strong><br>
+                Les {len(st.session_state.chauffeurs_data)} affectations sont sauvegardées et resteront même si vous changez de fichier.
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown("""
+                <div class="warning-box">
+                ℹ️ <strong>Les affectations sont persistantes</strong><br>
+                Toutes les affectations que vous créez seront sauvegardées jusqu'à ce que vous les supprimiez manuellement.
+                </div>
+                """, unsafe_allow_html=True)
             
             col1, col2 = st.columns([1, 2])
             
