@@ -195,18 +195,27 @@ class GestionTransportWeb:
     
     def ajuster_heure_ete(self, heure, heure_ete_active):
         return heure - 1 if heure_ete_active else heure
-    
+
     def extraire_heures(self, planning_str):
+        """Extrait les heures de début et fin d'un planning - VERSION CORRIGÉE"""
         if pd.isna(planning_str) or planning_str in ['REPOS', 'ABSENCE', 'OFF', 'MALADIE', 'CONGÉ PAYÉ', 'CONGÉ MATERNITÉ']:
             return None, None
         
-        texte = str(planning_str)
-        heures = re.findall(r'(\d{1,2})h(\d{0,2})', texte)
+        texte = str(planning_str).strip()
         
-        if len(heures) >= 2:
-            heure_debut = int(heures[0][0])
-            heure_fin = int(heures[-1][0])
+        # Nettoyer le texte
+        texte = re.sub(r'[^\dh\s\-à]', ' ', texte)
+        texte = re.sub(r'\s+', ' ', texte)
+        
+        # Pattern pour formats: 7h-16h, 7h-16h, 14h-23h, etc.
+        pattern_principal = r'(\d{1,2})h?\s*[\-à]\s*(\d{1,2})h?'
+        match = re.search(pattern_principal, texte)
+        
+        if match:
+            heure_debut = int(match.group(1))
+            heure_fin = int(match.group(2))
             
+            # Ajuster les heures de fin après minuit
             if heure_fin < heure_debut and heure_fin < 12:
                 heure_fin += 24
             
@@ -215,7 +224,7 @@ class GestionTransportWeb:
         return None, None
     
     def traiter_donnees(self, heure_ete_active, jour_selectionne, heures_ramassage_selectionnees, heures_depart_selectionnees):
-        """Traite les données du fichier Excel"""
+        """Traite les données du fichier Excel - VERSION CORRIGÉE"""
         if self.df is None:
             return
         
@@ -231,6 +240,7 @@ class GestionTransportWeb:
             nom_agent = agent['Salarie']
             info_agent = self.get_info_agent(nom_agent)
             
+            # DEBUG: Vérifier les agents exclus
             if info_agent['voiture'] == "Oui":
                 continue
             
@@ -245,7 +255,12 @@ class GestionTransportWeb:
                 planning = agent[jour_col]
                 heure_debut, heure_fin = self.extraire_heures(planning)
                 
+                # DEBUG pour Theo
+                if "Theo" in nom_agent and jour_nom == "Mardi":
+                    st.write(f"DEBUG Theo - Planning: '{planning}' -> Début: {heure_debut}, Fin: {heure_fin}")
+                
                 if heure_debut is not None and heure_fin is not None:
+                    # Appliquer ajustement heure d'été si nécessaire
                     if heure_ete_active:
                         heure_debut_ajustee = self.ajuster_heure_ete(heure_debut, heure_ete_active)
                         heure_fin_ajustee = self.ajuster_heure_ete(heure_fin, heure_ete_active)
@@ -253,7 +268,7 @@ class GestionTransportWeb:
                         heure_debut_ajustee = heure_debut
                         heure_fin_ajustee = heure_fin
                     
-                    # RAMASSAGE
+                    # RAMASSAGE - vérifier l'heure de début
                     if heure_debut_ajustee in heures_ramassage_selectionnees:
                         agent_data = {
                             'Agent': nom_agent,
@@ -267,7 +282,7 @@ class GestionTransportWeb:
                         }
                         self.liste_ramassage_actuelle.append(agent_data)
                     
-                    # DÉPART
+                    # DÉPART - vérifier l'heure de fin
                     heure_fin_comparaison = heure_fin_ajustee
                     if heure_fin_comparaison >= 24:
                         heure_fin_comparaison = heure_fin_comparaison - 24
@@ -329,7 +344,7 @@ class GestionTransportWeb:
         return chauffeurs_taxi, chauffeurs_autres
     
     def exporter_suivi_chauffeurs(self, jour_selectionne_export):
-        """Exporte le suivi des chauffeurs avec statistiques complètes et mise en forme"""
+        """Exporte le suivi des chauffeurs avec statistiques complètes et mise en forme - VERSION CORRIGÉE"""
         if self.df_chauffeurs.empty:
             return None
         
@@ -421,7 +436,7 @@ class GestionTransportWeb:
             statistiques_societes_taxi = {}
             statistiques_chauffeurs_taxi = {}
             
-            # Grouper par jour, chauffeur, heure et type
+            # Grouper par jour, chauffeur, heure et type pour Taxi aussi
             groupes_taxi = chauffeurs_taxi.groupby(['Jour', 'Chauffeur', 'Heure', 'Type_Transport'])
             
             # Trier par date, puis chauffeur, puis heure
@@ -478,7 +493,7 @@ class GestionTransportWeb:
         
         # Statistiques pour chauffeurs normaux
         if not chauffeurs_autres.empty:
-            donnees_export.append(["🚗 CHAUFFEURS NORMALUX", "", "", "", "", "", ""])
+            donnees_export.append(["🚗 CHAUFFEURS NORMAUX", "", "", "", "", "", ""])
             donnees_export.append([f"Total des courses normales: {total_courses_normaux}", "", "", "", "", "", ""])
             
             # Statistiques par chauffeur normaux
