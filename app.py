@@ -43,14 +43,14 @@ class GestionTransportWeb:
                     st.sidebar.warning("⚠️ Erreur chargement sauvegarde, nouvelle session créée")
                     self.df_chauffeurs = pd.DataFrame(columns=[
                         'Chauffeur', 'Heure', 'Agent', 'Adresse', 'Telephone', 'Societe', 
-                        'Vehicule', 'Type_Transport', 'Jour', 'Date_Ajout'
+                        'Vehicule', 'Type_Transport', 'Jour', 'Date_Ajout', 'Date_Reelle'
                     ])
                     st.session_state.chauffeurs_data = self.df_chauffeurs
             else:
                 # Première utilisation
                 self.df_chauffeurs = pd.DataFrame(columns=[
                     'Chauffeur', 'Heure', 'Agent', 'Adresse', 'Telephone', 'Societe', 
-                    'Vehicule', 'Type_Transport', 'Jour', 'Date_Ajout'
+                    'Vehicule', 'Type_Transport', 'Jour', 'Date_Ajout', 'Date_Reelle'
                 ])
                 st.session_state.chauffeurs_data = self.df_chauffeurs
         else:
@@ -101,7 +101,7 @@ class GestionTransportWeb:
         try:
             df_charge = pd.read_excel(uploaded_file)
             # Vérifier que le fichier a les bonnes colonnes
-            colonnes_requises = ['Chauffeur', 'Heure', 'Agent', 'Adresse', 'Telephone', 'Societe', 'Vehicule', 'Type_Transport', 'Jour']
+            colonnes_requises = ['Chauffeur', 'Heure', 'Agent', 'Adresse', 'Telephone', 'Societe', 'Vehicule', 'Type_Transport', 'Jour', 'Date_Reelle']
             
             if all(col in df_charge.columns for col in colonnes_requises):
                 self.df_chauffeurs = df_charge
@@ -337,7 +337,8 @@ class GestionTransportWeb:
                             'Adresse': info_agent['adresse'],
                             'Telephone': info_agent['tel'],
                             'Societe': info_agent['societe'],
-                            'Voiture': info_agent['voiture']
+                            'Voiture': info_agent['voiture'],
+                            'Date_Reelle': self.get_date_du_jour(jour_nom)
                         }
                         self.liste_ramassage_actuelle.append(agent_data)
                     
@@ -359,7 +360,8 @@ class GestionTransportWeb:
                             'Adresse': info_agent['adresse'],
                             'Telephone': info_agent['tel'],
                             'Societe': info_agent['societe'],
-                            'Voiture': info_agent['voiture']
+                            'Voiture': info_agent['voiture'],
+                            'Date_Reelle': self.get_date_du_jour(jour_nom)
                         }
                         self.liste_depart_actuelle.append(agent_data)
         
@@ -369,7 +371,9 @@ class GestionTransportWeb:
         self.liste_depart_actuelle.sort(key=lambda x: (ordre_jours.index(x['Jour']), x['Heure']))
     
     def ajouter_affectation(self, chauffeur, heure, agents_selectionnes, type_transport, jour):
-        """Ajoute une affectation de chauffeur"""
+        """Ajoute une affectation de chauffeur avec la date réelle"""
+        date_reelle = self.get_date_du_jour(jour)
+        
         for agent_nom in agents_selectionnes:
             info_agent = self.get_info_agent(agent_nom)
             
@@ -383,7 +387,8 @@ class GestionTransportWeb:
                 'Vehicule': "Non renseigné",
                 'Type_Transport': type_transport,
                 'Jour': jour,
-                'Date_Ajout': datetime.now().strftime("%d/%m/%Y %H:%M")
+                'Date_Ajout': datetime.now().strftime("%d/%m/%Y %H:%M"),
+                'Date_Reelle': date_reelle  # Date réelle du jour d'affectation
             }
             
             nouvelle_ligne = pd.DataFrame([nouvelle_affectation])
@@ -407,7 +412,7 @@ class GestionTransportWeb:
         """Supprime toutes les affectations"""
         self.df_chauffeurs = pd.DataFrame(columns=[
             'Chauffeur', 'Heure', 'Agent', 'Adresse', 'Telephone', 'Societe', 
-            'Vehicule', 'Type_Transport', 'Jour', 'Date_Ajout'
+            'Vehicule', 'Type_Transport', 'Jour', 'Date_Ajout', 'Date_Reelle'
         ])
         st.session_state.chauffeurs_data = self.df_chauffeurs
         
@@ -422,6 +427,152 @@ class GestionTransportWeb:
         
         return chauffeurs_taxi, chauffeurs_autres
     
+    def calculer_statistiques_mensuelles(self, mois=None, annee=None):
+        """Calcule les statistiques mensuelles pour la paie"""
+        if self.df_chauffeurs.empty:
+            return None
+        
+        # Filtrer par mois/année si spécifié
+        df_filtre = self.df_chauffeurs.copy()
+        
+        if mois and annee:
+            # Convertir Date_Reelle en datetime pour filtrage
+            try:
+                df_filtre['Date_Reelle_DT'] = pd.to_datetime(df_filtre['Date_Reelle'], format='%d/%m/%Y', errors='coerce')
+                df_filtre = df_filtre[
+                    (df_filtre['Date_Reelle_DT'].dt.month == mois) & 
+                    (df_filtre['Date_Reelle_DT'].dt.year == annee)
+                ]
+            except:
+                pass
+        
+        if df_filtre.empty:
+            return None
+        
+        # Séparer Taxi des autres chauffeurs
+        chauffeurs_taxi, chauffeurs_autres = self.separer_chauffeurs_taxi(df_filtre)
+        
+        statistiques = {
+            'periode': f"{mois}/{annee}" if mois and annee else "Toutes périodes",
+            'total_courses': 0,
+            'chauffeurs_normaux': {},
+            'chauffeurs_taxi': {},
+            'societes_normaux': {},
+            'societes_taxi': {},
+            'details_courses': []
+        }
+        
+        # Compter les courses pour les chauffeurs normaux
+        if not chauffeurs_autres.empty:
+            # Grouper par chauffeur et compter les courses uniques (basées sur heure + date)
+            courses_chauffeurs_normaux = chauffeurs_autres.groupby(['Chauffeur', 'Heure', 'Date_Reelle']).size()
+            
+            for (chauffeur, heure, date_reelle), nb_personnes in courses_chauffeurs_normaux.items():
+                if chauffeur not in statistiques['chauffeurs_normaux']:
+                    statistiques['chauffeurs_normaux'][chauffeur] = 0
+                statistiques['chauffeurs_normaux'][chauffeur] += 1
+                statistiques['total_courses'] += 1
+                
+                # Compter par société pour cette course
+                course_data = chauffeurs_autres[
+                    (chauffeurs_autres['Chauffeur'] == chauffeur) & 
+                    (chauffeurs_autres['Heure'] == heure) & 
+                    (chauffeurs_autres['Date_Reelle'] == date_reelle)
+                ]
+                
+                societes_course = course_data['Societe'].value_counts().to_dict()
+                for societe, count in societes_course.items():
+                    if societe not in statistiques['societes_normaux']:
+                        statistiques['societes_normaux'][societe] = 0
+                    statistiques['societes_normaux'][societe] += count
+        
+        # Compter les courses pour les Taxi
+        if not chauffeurs_taxi.empty:
+            # Grouper par chauffeur taxi et compter les courses
+            courses_chauffeurs_taxi = chauffeurs_taxi.groupby(['Chauffeur', 'Heure', 'Date_Reelle']).size()
+            
+            for (chauffeur, heure, date_reelle), nb_personnes in courses_chauffeurs_taxi.items():
+                if chauffeur not in statistiques['chauffeurs_taxi']:
+                    statistiques['chauffeurs_taxi'][chauffeur] = 0
+                statistiques['chauffeurs_taxi'][chauffeur] += 1
+                statistiques['total_courses'] += 1
+                
+                # Compter par société pour cette course
+                course_data = chauffeurs_taxi[
+                    (chauffeurs_taxi['Chauffeur'] == chauffeur) & 
+                    (chauffeurs_taxi['Heure'] == heure) & 
+                    (chauffeurs_taxi['Date_Reelle'] == date_reelle)
+                ]
+                
+                societes_course = course_data['Societe'].value_counts().to_dict()
+                for societe, count in societes_course.items():
+                    if societe not in statistiques['societes_taxi']:
+                        statistiques['societes_taxi'][societe] = 0
+                    statistiques['societes_taxi'][societe] += count
+        
+        return statistiques
+    
+    def generer_rapport_paie_mensuel(self, mois=None, annee=None):
+        """Génère un rapport détaillé pour la paie mensuelle"""
+        stats = self.calculer_statistiques_mensuelles(mois, annee)
+        
+        if not stats:
+            return None
+        
+        donnees_rapport = []
+        
+        # En-tête
+        donnees_rapport.append(["RAPPORT DE PAIE MENSUEL - TRANSPORT"])
+        donnees_rapport.append([f"Période: {stats['periode']}"])
+        donnees_rapport.append([f"Total des courses: {stats['total_courses']}"])
+        donnees_rapport.append([])
+        
+        # Chauffeurs normaux
+        if stats['chauffeurs_normaux']:
+            donnees_rapport.append(["CHAUFFEURS NORMAUX"])
+            donnees_rapport.append(["Chauffeur", "Nombre de courses", "Pourcentage"])
+            
+            total_courses_normaux = sum(stats['chauffeurs_normaux'].values())
+            for chauffeur, nb_courses in sorted(stats['chauffeurs_normaux'].items(), key=lambda x: x[1], reverse=True):
+                pourcentage = (nb_courses / total_courses_normaux * 100) if total_courses_normaux > 0 else 0
+                donnees_rapport.append([chauffeur, nb_courses, f"{pourcentage:.1f}%"])
+            
+            donnees_rapport.append([])
+            
+            # Sociétés pour chauffeurs normaux
+            donnees_rapport.append(["RÉPARTITION PAR SOCIÉTÉ - CHAUFFEURS NORMAUX"])
+            donnees_rapport.append(["Société", "Nombre de personnes", "Pourcentage"])
+            
+            total_personnes_normaux = sum(stats['societes_normaux'].values())
+            for societe, count in sorted(stats['societes_normaux'].items(), key=lambda x: x[1], reverse=True):
+                pourcentage = (count / total_personnes_normaux * 100) if total_personnes_normaux > 0 else 0
+                donnees_rapport.append([societe, count, f"{pourcentage:.1f}%"])
+            
+            donnees_rapport.append([])
+        
+        # Chauffeurs Taxi
+        if stats['chauffeurs_taxi']:
+            donnees_rapport.append(["CHAUFFEURS TAXI"])
+            donnees_rapport.append(["Chauffeur", "Nombre de courses", "Pourcentage"])
+            
+            total_courses_taxi = sum(stats['chauffeurs_taxi'].values())
+            for chauffeur, nb_courses in sorted(stats['chauffeurs_taxi'].items(), key=lambda x: x[1], reverse=True):
+                pourcentage = (nb_courses / total_courses_taxi * 100) if total_courses_taxi > 0 else 0
+                donnees_rapport.append([chauffeur, nb_courses, f"{pourcentage:.1f}%"])
+            
+            donnees_rapport.append([])
+            
+            # Sociétés pour Taxi
+            donnees_rapport.append(["RÉPARTITION PAR SOCIÉTÉ - TAXI"])
+            donnees_rapport.append(["Société", "Nombre de personnes", "Pourcentage"])
+            
+            total_personnes_taxi = sum(stats['societes_taxi'].values())
+            for societe, count in sorted(stats['societes_taxi'].items(), key=lambda x: x[1], reverse=True):
+                pourcentage = (count / total_personnes_taxi * 100) if total_personnes_taxi > 0 else 0
+                donnees_rapport.append([societe, count, f"{pourcentage:.1f}%"])
+        
+        return pd.DataFrame(donnees_rapport)
+
     def exporter_suivi_chauffeurs(self, jour_selectionne_export):
         """Exporte le suivi des chauffeurs avec statistiques complètes et mise en forme - VERSION CORRIGÉE"""
         if self.df_chauffeurs.empty:
@@ -455,22 +606,22 @@ class GestionTransportWeb:
             statistiques_chauffeurs_normaux = {}
             
             # Grouper par jour, chauffeur, heure et type
-            groupes = chauffeurs_autres.groupby(['Jour', 'Chauffeur', 'Heure', 'Type_Transport'])
+            groupes = chauffeurs_autres.groupby(['Jour', 'Chauffeur', 'Heure', 'Type_Transport', 'Date_Reelle'])
             
             # Trier par date, puis chauffeur, puis heure
             ordre_jours = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
-            groupes_tries = sorted(groupes, key=lambda x: (
+            groupes_tries = sorted(grupes, key=lambda x: (
+                x[0][4],  # Date_Reelle
                 ordre_jours.index(x[0][0]),
                 x[0][1], 
                 x[0][2]
             ))
             
-            for (jour, chauffeur, heure, type_transport), groupe in groupes_tries:
-                date_groupe = self.get_date_du_jour(jour)
+            for (jour, chauffeur, heure, type_transport, date_reelle), groupe in groupes_tries:
                 nb_personnes_course = len(groupe)
                 societes_course = {}
                 
-                # Compter par chauffeur - CORRECTION ICI
+                # Compter par chauffeur
                 if chauffeur not in statistiques_chauffeurs_normaux:
                     statistiques_chauffeurs_normaux[chauffeur] = 0
                 statistiques_chauffeurs_normaux[chauffeur] += 1
@@ -488,7 +639,7 @@ class GestionTransportWeb:
                     
                     donnees_export.append([
                         ligne['Agent'], f"{heure}", chauffeur, ligne['Adresse'],
-                        societe, type_transport.lower(), date_groupe
+                        societe, type_transport.lower(), date_reelle
                     ])
                 
                 # Ajouter les statistiques de la course
@@ -506,7 +657,7 @@ class GestionTransportWeb:
                 total_courses_normaux += 1
                 donnees_export.append(["", "", "", "", "", "", ""])
         
-        # Traiter les chauffeurs Taxi - CORRECTION COMPLÈTE
+        # Traiter les chauffeurs Taxi
         if not chauffeurs_taxi.empty:
             donnees_export.append(["🚕 CHAUFFEURS TAXI", "", "", "", "", "", ""])
             donnees_export.append(["", "", "", "", "", "", ""])
@@ -515,22 +666,21 @@ class GestionTransportWeb:
             statistiques_societes_taxi = {}
             statistiques_chauffeurs_taxi = {}
             
-            # CORRECTION : Grouper correctement les courses Taxi
-            groupes_taxi = chauffeurs_taxi.groupby(['Chauffeur', 'Heure', 'Type_Transport', 'Jour'])
+            # Grouper correctement les courses Taxi
+            groupes_taxi = chauffeurs_taxi.groupby(['Chauffeur', 'Heure', 'Type_Transport', 'Jour', 'Date_Reelle'])
             
-            # Trier par chauffeur, puis heure
+            # Trier par date, chauffeur, puis heure
             groupes_taxi_tries = sorted(groupes_taxi, key=lambda x: (
+                x[0][4],  # Date_Reelle
                 x[0][0],  # Chauffeur
                 x[0][1],  # Heure
-                x[0][3]   # Jour
             ))
             
-            for (chauffeur, heure, type_transport, jour), groupe in groupes_taxi_tries:
-                date_groupe = self.get_date_du_jour(jour)
+            for (chauffeur, heure, type_transport, jour, date_reelle), groupe in groupes_taxi_tries:
                 nb_personnes_course = len(groupe)
                 societes_course = {}
                 
-                # CORRECTION : Compter correctement les chauffeurs taxi
+                # Compter correctement les chauffeurs taxi
                 if chauffeur not in statistiques_chauffeurs_taxi:
                     statistiques_chauffeurs_taxi[chauffeur] = 0
                 statistiques_chauffeurs_taxi[chauffeur] += 1
@@ -548,7 +698,7 @@ class GestionTransportWeb:
                     
                     donnees_export.append([
                         ligne['Agent'], f"{heure}", chauffeur, ligne['Adresse'],
-                        societe, type_transport.lower(), date_groupe
+                        societe, type_transport.lower(), date_reelle
                     ])
                 
                 # Ajouter les statistiques de la course
@@ -566,7 +716,6 @@ class GestionTransportWeb:
                 total_courses_taxi += 1
                 donnees_export.append(["", "", "", "", "", "", ""])
         
-        # 🔥 CORRECTION : Supprimer les doublons et vérifier le comptage
         # Supprimer les lignes vides en double à la fin
         while len(donnees_export) > 1 and donnees_export[-1] == ["", "", "", "", "", "", ""]:
             donnees_export.pop()
@@ -575,15 +724,13 @@ class GestionTransportWeb:
         courses_taxi_reel = 0
         for i, ligne in enumerate(donnees_export):
             if len(ligne) > 2 and "Taxi" in str(ligne[2]) and "RÉPARTITION" not in str(ligne[0]) and ligne[0] not in ["", "🚕 CHAUFFEURS TAXI"]:
-                # Compter les courses uniques basées sur les lignes de répartition
                 if i + 1 < len(donnees_export) and "RÉPARTITION COURSE TAXI" in str(donnees_export[i + 1][0]):
                     courses_taxi_reel += 1
         
-        # Utiliser le comptage réel si différent
         if courses_taxi_reel > 0 and courses_taxi_reel != total_courses_taxi:
             total_courses_taxi = courses_taxi_reel
         
-        # 🔥 STATISTIQUES GLOBALES SIMPLIFIÉES
+        # STATISTIQUES GLOBALES SIMPLIFIÉES
         donnees_export.append(["STATISTIQUES GLOBALES", "", "", "", "", "", ""])
         
         # Statistiques pour chauffeurs normaux
@@ -991,7 +1138,7 @@ def main():
         gestion.traiter_donnees(heure_ete_active, jour_selectionne, heures_ramassage, heures_depart)
         
         # Onglets
-        tab1, tab2, tab3 = st.tabs(["🚗 Liste de Ramassage", "🚙 Liste de Départ", "👨‍✈️ Gestion Chauffeurs"])
+        tab1, tab2, tab3, tab4 = st.tabs(["🚗 Liste de Ramassage", "🚙 Liste de Départ", "👨‍✈️ Gestion Chauffeurs", "💰 Rapport de Paie"])
         
         with tab1:
             st.markdown('<h2 class="section-header">📋 Liste de Ramassage</h2>', unsafe_allow_html=True)
@@ -1145,6 +1292,10 @@ def main():
                 
                 jour = st.selectbox("Jour", ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'])
                 
+                # Afficher la date réelle
+                date_reelle = gestion.get_date_du_jour(jour)
+                st.info(f"📅 Date réelle de l'affectation: **{date_reelle}**")
+                
                 # Liste des agents disponibles
                 if type_transport == "Ramassage":
                     agents_disponibles = [agent['Agent'] for agent in gestion.liste_ramassage_actuelle if agent['Jour'] == jour]
@@ -1181,6 +1332,7 @@ def main():
                                 badge = "🚕" if "taxi" in chauffeur_nom.lower() else "🚗"
                                 st.write(f"{badge} **{chauffeur_nom}** - {ligne['Heure']} - {ligne['Type_Transport']} - {ligne['Jour']}")
                                 st.write(f"👤 {ligne['Agent']} | 📍 {ligne['Adresse']} | 📞 {ligne['Telephone']} | 🏢 {ligne['Societe']}")
+                                st.write(f"📅 **Date réelle:** {ligne['Date_Reelle']}")
                                 if 'Date_Ajout' in ligne and pd.notna(ligne['Date_Ajout']):
                                     st.caption(f"🕐 Ajouté le: {ligne['Date_Ajout']}")
                             with col_b:
@@ -1223,6 +1375,85 @@ def main():
                 
                 else:
                     st.info("ℹ️ Aucune affectation de chauffeur enregistrée")
+        
+        with tab4:
+            st.markdown('<h2 class="section-header">💰 Rapport de Paie Mensuel</h2>', unsafe_allow_html=True)
+            
+            # Sélection du mois et année
+            col_mois, col_annee = st.columns(2)
+            with col_mois:
+                mois_selectionne = st.selectbox("Mois", 
+                    list(range(1, 13)), 
+                    format_func=lambda x: f"{x} - {['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'][x-1]}",
+                    index=datetime.now().month-1)
+            
+            with col_annee:
+                annee_selectionnee = st.selectbox("Année", 
+                    list(range(2020, datetime.now().year + 3)),
+                    index=datetime.now().year-2020)
+            
+            # Générer le rapport de paie
+            if st.button("💰 Générer le rapport de paie", type="primary"):
+                rapport_paie = gestion.generer_rapport_paie_mensuel(mois_selectionne, annee_selectionnee)
+                
+                if rapport_paie is not None:
+                    # Afficher le rapport
+                    st.subheader(f"📊 Rapport de Paie - {mois_selectionne}/{annee_selectionnee}")
+                    st.dataframe(rapport_paie, use_container_width=True, hide_index=True)
+                    
+                    # Téléchargement
+                    output = BytesIO()
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        rapport_paie.to_excel(writer, sheet_name=f'Paie_{mois_selectionne}_{annee_selectionnee}', index=False, header=False)
+                    
+                    st.download_button(
+                        label="📥 Télécharger le rapport de paie",
+                        data=output.getvalue(),
+                        file_name=f"Rapport_Paie_Transport_{mois_selectionne}_{annee_selectionnee}.xlsx",
+                        mime="application/vnd.ms-excel"
+                    )
+                    
+                    # Statistiques rapides
+                    stats = gestion.calculer_statistiques_mensuelles(mois_selectionne, annee_selectionnee)
+                    if stats:
+                        st.subheader("📈 Résumé des Statistiques")
+                        
+                        col_stat1, col_stat2 = st.columns(2)
+                        with col_stat1:
+                            st.metric("Total des courses", stats['total_courses'])
+                            if stats['chauffeurs_normaux']:
+                                st.write("**Chauffeurs normaux:**")
+                                for chauffeur, nb in sorted(stats['chauffeurs_normaux'].items(), key=lambda x: x[1], reverse=True)[:5]:
+                                    st.write(f"- {chauffeur}: {nb} courses")
+                        
+                        with col_stat2:
+                            total_personnes = sum(stats['societes_normaux'].values()) + sum(stats['societes_taxi'].values())
+                            st.metric("Total personnes transportées", total_personnes)
+                            if stats['chauffeurs_taxi']:
+                                st.write("**Chauffeurs Taxi:**")
+                                for chauffeur, nb in sorted(stats['chauffeurs_taxi'].items(), key=lambda x: x[1], reverse=True)[:5]:
+                                    st.write(f"- {chauffeur}: {nb} courses")
+                else:
+                    st.warning("Aucune donnée trouvée pour la période sélectionnée")
+            
+            # Affichage des statistiques globales
+            st.subheader("📊 Statistiques Globales")
+            if not gestion.df_chauffeurs.empty:
+                stats_globales = gestion.calculer_statistiques_mensuelles()
+                if stats_globales:
+                    col_glob1, col_glob2 = st.columns(2)
+                    
+                    with col_glob1:
+                        st.metric("Total courses toutes périodes", stats_globales['total_courses'])
+                        st.metric("Chauffeurs normaux", len(stats_globales['chauffeurs_normaux']))
+                        st.metric("Chauffeurs Taxi", len(stats_globales['chauffeurs_taxi']))
+                    
+                    with col_glob2:
+                        total_personnes_global = sum(stats_globales['societes_normaux'].values()) + sum(stats_globales['societes_taxi'].values())
+                        st.metric("Total personnes transportées", total_personnes_global)
+                        st.metric("Sociétés concernées", len(set(list(stats_globales['societes_normaux'].keys()) + list(stats_globales['societes_taxi'].keys()))))
+            else:
+                st.info("Aucune statistique disponible - Ajoutez des affectations d'abord")
     
     else:
         st.info("👈 Veuillez sélectionner un fichier Excel dans la barre latérale pour commencer")
