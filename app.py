@@ -48,6 +48,40 @@ class GestionTransportWeb:
             self.df_info = pd.DataFrame()
             st.sidebar.error(f"❌ Erreur chargement info.xlsx: {e}")
     
+    def sauvegarder_affectations(self):
+        """Sauvegarde les affectations dans un fichier Excel"""
+        if self.df_chauffeurs.empty:
+            return None
+        
+        # Créer un nom de fichier avec la date du mois
+        nom_fichier = f"affectations_chauffeurs_{datetime.now().strftime('%Y_%m')}.xlsx"
+        
+        # Sauvegarder dans un buffer
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            self.df_chauffeurs.to_excel(writer, sheet_name='Affectations', index=False)
+        
+        return output.getvalue(), nom_fichier
+    
+    def charger_affectations(self, uploaded_file):
+        """Charge les affectations depuis un fichier Excel"""
+        try:
+            df_charge = pd.read_excel(uploaded_file)
+            # Vérifier que le fichier a les bonnes colonnes
+            colonnes_requises = ['Chauffeur', 'Heure', 'Agent', 'Adresse', 'Telephone', 'Societe', 'Vehicule', 'Type_Transport', 'Jour']
+            
+            if all(col in df_charge.columns for col in colonnes_requises):
+                self.df_chauffeurs = df_charge
+                st.session_state.chauffeurs_data = self.df_chauffeurs
+                return True
+            else:
+                st.error("❌ Le fichier ne contient pas les colonnes requises")
+                return False
+                
+        except Exception as e:
+            st.error(f"❌ Erreur lors du chargement du fichier: {e}")
+            return False
+    
     def get_info_agent(self, nom_agent):
         """Récupère les informations d'un agent"""
         if self.df_info is None or self.df_info.empty:
@@ -109,24 +143,18 @@ class GestionTransportWeb:
             df_entetes = pd.read_excel(file, nrows=2, header=None)
             dates_par_jour = {}
             
-            st.write("🔍 Debug - Structure du fichier:")
-            st.write("Ligne 0:", df_entetes.iloc[0].tolist())
-            st.write("Ligne 1 (dates):", df_entetes.iloc[1].tolist())
-            
-            # Mapping des positions des colonnes vers les jours - CORRIGÉ
+            # Mapping des positions des colonnes vers les jours
             positions_jours = {
                 1: 'Lundi', 2: 'Mardi', 3: 'Mercredi', 4: 'Jeudi', 
                 5: 'Vendredi', 6: 'Samedi', 7: 'Dimanche'
             }
             
-            # Parcourir les colonnes de jours - MAINTENANT ON PREND LA LIGNE 1 (2ème ligne)
+            # Parcourir les colonnes de jours
             for col_index, jour_nom in positions_jours.items():
                 if col_index < len(df_entetes.columns):
                     # Prendre la cellule de la DEUXIÈME ligne (ligne 1) qui contient les dates
                     cellule = df_entetes.iloc[1, col_index]
                     nom_colonne = str(cellule) if pd.notna(cellule) else ""
-                    
-                    st.write(f"Colonne {col_index} ({jour_nom}): '{nom_colonne}'")
                     
                     # Chercher un motif date (jj/mm ou jj/mm/aaaa)
                     match = re.search(r'(\d{1,2})[/-](\d{1,2})', nom_colonne)
@@ -143,17 +171,14 @@ class GestionTransportWeb:
                         
                         date_trouvee = f"{jour.zfill(2)}/{mois.zfill(2)}/{annee_courante}"
                         dates_par_jour[jour_nom] = date_trouvee
-                        st.success(f"✅ {jour_nom}: {date_trouvee}")
                     else:
                         # Date par défaut si non détectée
                         date_par_defaut = self.calculer_date_par_defaut(jour_nom)
                         dates_par_jour[jour_nom] = date_par_defaut
-                        st.warning(f"⚠️ {jour_nom}: Date non détectée, utilisation: {date_par_defaut}")
             
             return dates_par_jour
             
         except Exception as e:
-            st.error(f"Erreur extraction dates: {e}")
             return self.generer_dates_par_defaut()
     
     def calculer_date_par_defaut(self, jour_nom=None):
@@ -257,10 +282,6 @@ class GestionTransportWeb:
             for jour_col, jour_nom in jours_a_verifier:
                 planning = agent[jour_col]
                 heure_debut, heure_fin = self.extraire_heures(planning)
-                
-                # DEBUG pour Theo
-                if "Theo" in nom_agent and jour_nom == "Mardi":
-                    st.write(f"DEBUG Theo - Planning: '{planning}' -> Début: {heure_debut}, Fin: {heure_fin}")
                 
                 if heure_debut is not None and heure_fin is not None:
                     # Appliquer ajustement heure d'été si nécessaire
@@ -783,6 +804,13 @@ def main():
             border: 1px solid #ffeaa7;
             color: #856404;
         }
+        .info-box {
+            padding: 1rem;
+            border-radius: 0.5rem;
+            background-color: #d1ecf1;
+            border: 1px solid #bee5eb;
+            color: #0c5460;
+        }
         .print-button {
             background-color: #28a745;
             color: white;
@@ -827,12 +855,6 @@ def main():
                     st.success(f"✅ {uploaded_file.name} chargé")
                     st.success(f"📊 {len(gestion.df)} agents détectés")
                     
-                    # Afficher les dates détectées
-                    with st.expander("📅 Dates détectées"):
-                        ordre_jours = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
-                        for jour in ordre_jours:
-                            if jour in gestion.dates_par_jour:
-                                st.write(f"**{jour}**: {gestion.dates_par_jour[jour]}")
                 else:
                     st.error(f"❌ Format de fichier incorrect. Colonnes détectées: {len(gestion.df.columns)}")
                     st.write("Colonnes:", gestion.df.columns.tolist())
@@ -873,11 +895,38 @@ def main():
         nb_affectations = len(st.session_state.chauffeurs_data)
         st.write(f"**Affectations enregistrées :** {nb_affectations}")
         
+        # Sauvegarde des affectations
+        st.subheader("💾 Sauvegarder")
+        if nb_affectations > 0:
+            if st.button("📥 Sauvegarder les affectations", type="primary"):
+                data, nom_fichier = gestion.sauvegarder_affectations()
+                st.download_button(
+                    label="📥 Télécharger le fichier de sauvegarde",
+                    data=data,
+                    file_name=nom_fichier,
+                    mime="application/vnd.ms-excel"
+                )
+                st.success(f"✅ {nb_affectations} affectations sauvegardées")
+        else:
+            st.warning("Aucune affectation à sauvegarder")
+        
+        # Chargement des affectations
+        st.subheader("📂 Charger")
+        fichier_sauvegarde = st.file_uploader("Charger une sauvegarde", type=['xlsx'], key="load_file")
+        if fichier_sauvegarde:
+            if st.button("📤 Charger les affectations", type="secondary"):
+                if gestion.charger_affectations(fichier_sauvegarde):
+                    st.success("✅ Affectations chargées avec succès")
+                    st.rerun()
+        
         # Bouton pour supprimer toutes les affectations
+        st.subheader("🗑️ Supprimer")
         if nb_affectations > 0:
             if st.button("🗑️ Supprimer TOUTES les affectations", type="secondary"):
                 gestion.supprimer_toutes_affectations()
                 st.rerun()
+        else:
+            st.info("Aucune affectation à supprimer")
     
     # Contenu principal
     if gestion.df is not None:
@@ -1012,16 +1061,18 @@ def main():
             # Bannière d'information sur la persistance
             if len(st.session_state.chauffeurs_data) > 0:
                 st.markdown(f"""
-                <div class="success-box">
-                ✅ <strong>Données persistantes</strong><br>
-                Les {len(st.session_state.chauffeurs_data)} affectations sont sauvegardées et resteront même si vous changez de fichier.
+                <div class="info-box">
+                💰 <strong>Système de paie des chauffeurs</strong><br>
+                Les {len(st.session_state.chauffeurs_data)} affectations sont sauvegardées pour la paie mensuelle.<br>
+                <em>Utilisez les boutons de sauvegarde dans la sidebar pour conserver les données.</em>
                 </div>
                 """, unsafe_allow_html=True)
             else:
                 st.markdown("""
                 <div class="warning-box">
-                ℹ️ <strong>Les affectations sont persistantes</strong><br>
-                Toutes les affectations que vous créez seront sauvegardées jusqu'à ce que vous les supprimiez manuellement.
+                💰 <strong>Système de paie des chauffeurs</strong><br>
+                Les affectations que vous créez peuvent être sauvegardées pour la paie mensuelle.<br>
+                <em>Utilisez les boutons de sauvegarde dans la sidebar pour conserver les données.</em>
                 </div>
                 """, unsafe_allow_html=True)
             
