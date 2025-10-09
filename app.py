@@ -26,8 +26,8 @@ class GestionTransportWeb:
         self.fichier_sauvegarde = "affectations_permanentes.xlsx"
         
         # Prix par défaut
-        self.prix_course_chauffeur = 10  # Prix par défaut pour les chauffeurs normaux
-        self.prix_course_taxi = 15       # Prix par défaut pour les taxis
+        self.prix_course_chauffeur = 19 # Prix par défaut pour les chauffeurs normaux
+        self.prix_course_taxi = 23       # Prix par défaut pour les taxis
         
         # Initialiser ou charger les données
         self.initialiser_donnees()
@@ -1397,3 +1397,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
