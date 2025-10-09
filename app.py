@@ -7,7 +7,7 @@ import tempfile
 from io import BytesIO
 import base64
 from reportlab.lib.pagesizes import letter, A4
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.platxpypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from reportlab.lib.units import inch
@@ -22,18 +22,51 @@ class GestionTransportWeb:
         self.liste_ramassage_actuelle = []
         self.liste_depart_actuelle = []
         
-        # Initialiser l'état de session pour les chauffeurs
-        if 'chauffeurs_data' not in st.session_state:
-            st.session_state.chauffeurs_data = pd.DataFrame(columns=[
-                'Chauffeur', 'Heure', 'Agent', 'Adresse', 'Telephone', 'Societe', 'Vehicule', 'Type_Transport', 'Jour'
-            ])
+        # Fichier de sauvegarde permanent
+        self.fichier_sauvegarde = "affectations_permanentes.xlsx"
         
-        # Initialiser l'état pour le fichier actuel
-        if 'current_file_hash' not in st.session_state:
-            st.session_state.current_file_hash = None
-        
-        self.df_chauffeurs = st.session_state.chauffeurs_data
+        # Initialiser ou charger les données
+        self.initialiser_donnees()
         self.charger_infos_agents()
+    
+    def initialiser_donnees(self):
+        """Initialise ou charge les données depuis le fichier de sauvegarde"""
+        # Essayer de charger depuis la session state d'abord
+        if 'chauffeurs_data' not in st.session_state:
+            # Si pas en session, charger depuis le fichier
+            if os.path.exists(self.fichier_sauvegarde):
+                try:
+                    self.df_chauffeurs = pd.read_excel(self.fichier_sauvegarde)
+                    st.session_state.chauffeurs_data = self.df_chauffeurs
+                    st.sidebar.success("✅ Affectations chargées depuis la sauvegarde")
+                except Exception as e:
+                    st.sidebar.warning("⚠️ Erreur chargement sauvegarde, nouvelle session créée")
+                    self.df_chauffeurs = pd.DataFrame(columns=[
+                        'Chauffeur', 'Heure', 'Agent', 'Adresse', 'Telephone', 'Societe', 
+                        'Vehicule', 'Type_Transport', 'Jour', 'Date_Ajout'
+                    ])
+                    st.session_state.chauffeurs_data = self.df_chauffeurs
+            else:
+                # Première utilisation
+                self.df_chauffeurs = pd.DataFrame(columns=[
+                    'Chauffeur', 'Heure', 'Agent', 'Adresse', 'Telephone', 'Societe', 
+                    'Vehicule', 'Type_Transport', 'Jour', 'Date_Ajout'
+                ])
+                st.session_state.chauffeurs_data = self.df_chauffeurs
+        else:
+            # Déjà en session state
+            self.df_chauffeurs = st.session_state.chauffeurs_data
+    
+    def sauvegarder_donnees_permanentes(self):
+        """Sauvegarde les données dans un fichier permanent"""
+        try:
+            if not self.df_chauffeurs.empty:
+                self.df_chauffeurs.to_excel(self.fichier_sauvegarde, index=False)
+                return True
+            return False
+        except Exception as e:
+            st.error(f"❌ Erreur sauvegarde permanente: {e}")
+            return False
     
     def charger_infos_agents(self):
         """Charge le fichier info.xlsx avec les adresses et téléphones"""
@@ -49,9 +82,9 @@ class GestionTransportWeb:
             st.sidebar.error(f"❌ Erreur chargement info.xlsx: {e}")
     
     def sauvegarder_affectations(self):
-        """Sauvegarde les affectations dans un fichier Excel"""
+        """Sauvegarde les affectations dans un fichier Excel pour export"""
         if self.df_chauffeurs.empty:
-            return None
+            return None, None
         
         # Créer un nom de fichier avec la date du mois
         nom_fichier = f"affectations_chauffeurs_{datetime.now().strftime('%Y_%m')}.xlsx"
@@ -73,6 +106,8 @@ class GestionTransportWeb:
             if all(col in df_charge.columns for col in colonnes_requises):
                 self.df_chauffeurs = df_charge
                 st.session_state.chauffeurs_data = self.df_chauffeurs
+                # Sauvegarder en permanent
+                self.sauvegarder_donnees_permanentes()
                 return True
             else:
                 st.error("❌ Le fichier ne contient pas les colonnes requises")
@@ -347,7 +382,8 @@ class GestionTransportWeb:
                 'Societe': info_agent['societe'],
                 'Vehicule': "Non renseigné",
                 'Type_Transport': type_transport,
-                'Jour': jour
+                'Jour': jour,
+                'Date_Ajout': datetime.now().strftime("%d/%m/%Y %H:%M")
             }
             
             nouvelle_ligne = pd.DataFrame([nouvelle_affectation])
@@ -355,18 +391,28 @@ class GestionTransportWeb:
         
         # Mettre à jour la session state
         st.session_state.chauffeurs_data = self.df_chauffeurs
+        
+        # Sauvegarder en permanent
+        self.sauvegarder_donnees_permanentes()
     
     def supprimer_affectation(self, index):
         """Supprime une affectation"""
         self.df_chauffeurs = self.df_chauffeurs.drop(index).reset_index(drop=True)
         st.session_state.chauffeurs_data = self.df_chauffeurs
+        
+        # Sauvegarder en permanent
+        self.sauvegarder_donnees_permanentes()
 
     def supprimer_toutes_affectations(self):
         """Supprime toutes les affectations"""
         self.df_chauffeurs = pd.DataFrame(columns=[
-            'Chauffeur', 'Heure', 'Agent', 'Adresse', 'Telephone', 'Societe', 'Vehicule', 'Type_Transport', 'Jour'
+            'Chauffeur', 'Heure', 'Agent', 'Adresse', 'Telephone', 'Societe', 
+            'Vehicule', 'Type_Transport', 'Jour', 'Date_Ajout'
         ])
         st.session_state.chauffeurs_data = self.df_chauffeurs
+        
+        # Sauvegarder en permanent
+        self.sauvegarder_donnees_permanentes()
         st.success("✅ Toutes les affectations ont été supprimées")
 
     def separer_chauffeurs_taxi(self, df_filtre):
@@ -836,14 +882,6 @@ def main():
         
         if uploaded_file:
             try:
-                # Vérifier si le fichier a changé
-                current_file_hash = hash(uploaded_file.getvalue())
-                file_changed = st.session_state.current_file_hash != current_file_hash
-                
-                if file_changed:
-                    st.session_state.current_file_hash = current_file_hash
-                    st.info("🔄 Nouveau fichier détecté")
-                
                 # Charger les données en sautant les 2 premières lignes d'en-tête
                 gestion.df = pd.read_excel(uploaded_file, skiprows=2)
                 
@@ -894,6 +932,10 @@ def main():
         # Afficher le nombre d'affectations actuelles
         nb_affectations = len(st.session_state.chauffeurs_data)
         st.write(f"**Affectations enregistrées :** {nb_affectations}")
+        
+        # Indicateur de sauvegarde automatique
+        st.info("💾 **Sauvegarde automatique activée**")
+        st.write("Les données sont sauvegardées automatiquement")
         
         # Sauvegarde des affectations
         st.subheader("💾 Sauvegarder")
@@ -1062,17 +1104,17 @@ def main():
             if len(st.session_state.chauffeurs_data) > 0:
                 st.markdown(f"""
                 <div class="info-box">
-                💰 <strong>Système de paie des chauffeurs</strong><br>
-                Les {len(st.session_state.chauffeurs_data)} affectations sont sauvegardées pour la paie mensuelle.<br>
-                <em>Utilisez les boutons de sauvegarde dans la sidebar pour conserver les données.</em>
+                💰 <strong>Système de paie des chauffeurs - DONNÉES PERMANENTES</strong><br>
+                Les {len(st.session_state.chauffeurs_data)} affectations sont sauvegardées automatiquement.<br>
+                <em>Les données restent même après actualisation de la page.</em>
                 </div>
                 """, unsafe_allow_html=True)
             else:
                 st.markdown("""
                 <div class="warning-box">
-                💰 <strong>Système de paie des chauffeurs</strong><br>
-                Les affectations que vous créez peuvent être sauvegardées pour la paie mensuelle.<br>
-                <em>Utilisez les boutons de sauvegarde dans la sidebar pour conserver les données.</em>
+                💰 <strong>Système de paie des chauffeurs - DONNÉES PERMANENTES</strong><br>
+                Les affectations que vous créez sont sauvegardées automatiquement.<br>
+                <em>Les données restent même après actualisation de la page.</em>
                 </div>
                 """, unsafe_allow_html=True)
             
@@ -1139,6 +1181,8 @@ def main():
                                 badge = "🚕" if "taxi" in chauffeur_nom.lower() else "🚗"
                                 st.write(f"{badge} **{chauffeur_nom}** - {ligne['Heure']} - {ligne['Type_Transport']} - {ligne['Jour']}")
                                 st.write(f"👤 {ligne['Agent']} | 📍 {ligne['Adresse']} | 📞 {ligne['Telephone']} | 🏢 {ligne['Societe']}")
+                                if 'Date_Ajout' in ligne and pd.notna(ligne['Date_Ajout']):
+                                    st.caption(f"🕐 Ajouté le: {ligne['Date_Ajout']}")
                             with col_b:
                                 if st.button("🗑️", key=f"del_{idx}"):
                                     gestion.supprimer_affectation(idx)
