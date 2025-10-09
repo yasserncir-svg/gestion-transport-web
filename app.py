@@ -7,7 +7,7 @@ import tempfile
 from io import BytesIO
 import base64
 from reportlab.lib.pagesizes import letter, A4
-from reportlab.platxpypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from reportlab.lib.units import inch
