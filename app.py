@@ -361,7 +361,7 @@ class GestionTransportWeb:
         
         donnees_export = []
         
-        # Style d'en-tête
+        # Style d'en-tête SIMPLIFIÉ
         entete_style = ["Salarié", "HEURE", "CHAUFFEUR", "DESTINATION", "Plateau", "type", "date"]
         donnees_export.append(entete_style)
         donnees_export.append(["", "", "", "", "", "", ""])
@@ -391,7 +391,7 @@ class GestionTransportWeb:
                 nb_personnes_course = len(groupe)
                 societes_course = {}
                 
-                # Compter par chauffeur
+                # Compter par chauffeur - CORRECTION ICI
                 if chauffeur not in statistiques_chauffeurs_normaux:
                     statistiques_chauffeurs_normaux[chauffeur] = 0
                 statistiques_chauffeurs_normaux[chauffeur] += 1
@@ -423,11 +423,11 @@ class GestionTransportWeb:
                     donnees_export.append([
                         f"RÉPARTITION COURSE ({nb_personnes_course} pers.)", "", "", texte_pourcentages, "", "", ""
                     ])
-                
+            
                 total_courses_normaux += 1
                 donnees_export.append(["", "", "", "", "", "", ""])
         
-        # Traiter les chauffeurs Taxi
+        # Traiter les chauffeurs Taxi - CORRECTION COMPLÈTE
         if not chauffeurs_taxi.empty:
             donnees_export.append(["🚕 CHAUFFEURS TAXI", "", "", "", "", "", ""])
             donnees_export.append(["", "", "", "", "", "", ""])
@@ -436,23 +436,22 @@ class GestionTransportWeb:
             statistiques_societes_taxi = {}
             statistiques_chauffeurs_taxi = {}
             
-            # Grouper par jour, chauffeur, heure et type pour Taxi aussi
-            groupes_taxi = chauffeurs_taxi.groupby(['Jour', 'Chauffeur', 'Heure', 'Type_Transport'])
+            # CORRECTION : Grouper correctement les courses Taxi
+            groupes_taxi = chauffeurs_taxi.groupby(['Chauffeur', 'Heure', 'Type_Transport', 'Jour'])
             
-            # Trier par date, puis chauffeur, puis heure
-            ordre_jours = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
+            # Trier par chauffeur, puis heure
             groupes_taxi_tries = sorted(groupes_taxi, key=lambda x: (
-                ordre_jours.index(x[0][0]),
-                x[0][1], 
-                x[0][2]
+                x[0][0],  # Chauffeur
+                x[0][1],  # Heure
+                x[0][3]   # Jour
             ))
             
-            for (jour, chauffeur, heure, type_transport), groupe in groupes_taxi_tries:
+            for (chauffeur, heure, type_transport, jour), groupe in groupes_taxi_tries:
                 date_groupe = self.get_date_du_jour(jour)
                 nb_personnes_course = len(groupe)
                 societes_course = {}
                 
-                # Compter par chauffeur
+                # CORRECTION : Compter correctement les chauffeurs taxi
                 if chauffeur not in statistiques_chauffeurs_taxi:
                     statistiques_chauffeurs_taxi[chauffeur] = 0
                 statistiques_chauffeurs_taxi[chauffeur] += 1
@@ -488,7 +487,24 @@ class GestionTransportWeb:
                 total_courses_taxi += 1
                 donnees_export.append(["", "", "", "", "", "", ""])
         
-        # 🔥 AJOUT DES STATISTIQUES GLOBALES DÉTAILLÉES
+        # 🔥 CORRECTION : Supprimer les doublons et vérifier le comptage
+        # Supprimer les lignes vides en double à la fin
+        while len(donnees_export) > 1 and donnees_export[-1] == ["", "", "", "", "", "", ""]:
+            donnees_export.pop()
+        
+        # Vérifier le comptage réel des courses taxi
+        courses_taxi_reel = 0
+        for i, ligne in enumerate(donnees_export):
+            if len(ligne) > 2 and "Taxi" in str(ligne[2]) and "RÉPARTITION" not in str(ligne[0]) and ligne[0] not in ["", "🚕 CHAUFFEURS TAXI"]:
+                # Compter les courses uniques basées sur les lignes de répartition
+                if i + 1 < len(donnees_export) and "RÉPARTITION COURSE TAXI" in str(donnees_export[i + 1][0]):
+                    courses_taxi_reel += 1
+        
+        # Utiliser le comptage réel si différent
+        if courses_taxi_reel > 0 and courses_taxi_reel != total_courses_taxi:
+            total_courses_taxi = courses_taxi_reel
+        
+        # 🔥 STATISTIQUES GLOBALES SIMPLIFIÉES
         donnees_export.append(["STATISTIQUES GLOBALES", "", "", "", "", "", ""])
         
         # Statistiques pour chauffeurs normaux
@@ -535,7 +551,7 @@ class GestionTransportWeb:
                     "", "", "", f"{societe}: {count} personnes ({pourcentage_global:.1f}%)", "", "", ""
                 ])
         
-        # Résumé final
+        # RÉSUMÉ FINAL SIMPLIFIÉ
         donnees_export.append(["", "", "", "", "", "", ""])
         donnees_export.append(["RÉSUMÉ FINAL", "", "", "", "", "", ""])
         total_courses_global = total_courses_normaux + total_courses_taxi
@@ -543,9 +559,6 @@ class GestionTransportWeb:
         
         donnees_export.append([f"Total courses toutes catégories: {total_courses_global}", "", "", "", "", "", ""])
         donnees_export.append([f"Total personnes transportées: {total_personnes_global}", "", "", "", "", "", ""])
-        donnees_export.append([f"Nombre de chauffeurs normaux: {len(statistiques_chauffeurs_normaux)}", "", "", "", "", "", ""])
-        donnees_export.append([f"Nombre de chauffeurs taxi: {len(statistiques_chauffeurs_taxi)}", "", "", "", "", "", ""])
-        donnees_export.append([f"Nombre total de sociétés: {len(set(list(statistiques_societes_normaux.keys()) + list(statistiques_societes_taxi.keys())))}", "", "", "", "", "", ""])
         
         return pd.DataFrame(donnees_export)
 
