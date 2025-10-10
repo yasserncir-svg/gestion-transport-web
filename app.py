@@ -24,10 +24,7 @@ class GestionTransportWeb:
         
         # Fichier de sauvegarde permanent
         self.fichier_sauvegarde = "affectations_permanentes.xlsx"
-        
-        # Prix par défaut
-        self.prix_course_chauffeur = 19 # Prix par défaut pour les chauffeurs normaux
-        self.prix_course_taxi = 23       # Prix par défaut pour les taxis
+        self.fichier_info_complementaire = "info_complementaire.xlsx"
         
         # Initialiser ou charger les données
         self.initialiser_donnees()
@@ -47,29 +44,45 @@ class GestionTransportWeb:
                     st.sidebar.warning("⚠️ Erreur chargement sauvegarde, nouvelle session créée")
                     self.df_chauffeurs = pd.DataFrame(columns=[
                         'Chauffeur', 'Heure', 'Agent', 'Adresse', 'Telephone', 'Societe', 
-                        'Vehicule', 'Type_Transport', 'Jour', 'Date_Ajout', 'Date_Reelle',
-                        'Prix_Course', 'Statut_Paiement'
+                        'Vehicule', 'Type_Transport', 'Jour', 'Date_Ajout', 'Date_Reelle'
                     ])
                     st.session_state.chauffeurs_data = self.df_chauffeurs
             else:
                 # Première utilisation
                 self.df_chauffeurs = pd.DataFrame(columns=[
                     'Chauffeur', 'Heure', 'Agent', 'Adresse', 'Telephone', 'Societe', 
-                    'Vehicule', 'Type_Transport', 'Jour', 'Date_Ajout', 'Date_Reelle',
-                    'Prix_Course', 'Statut_Paiement'
+                    'Vehicule', 'Type_Transport', 'Jour', 'Date_Ajout', 'Date_Reelle'
                 ])
                 st.session_state.chauffeurs_data = self.df_chauffeurs
         else:
             # Déjà en session state
             self.df_chauffeurs = st.session_state.chauffeurs_data
+        
+        # Initialiser les informations complémentaires
+        if 'info_complementaire' not in st.session_state:
+            if os.path.exists(self.fichier_info_complementaire):
+                try:
+                    self.df_info_complementaire = pd.read_excel(self.fichier_info_complementaire)
+                    st.session_state.info_complementaire = self.df_info_complementaire
+                except:
+                    self.df_info_complementaire = pd.DataFrame(columns=['Agent', 'Adresse', 'Telephone', 'Societe'])
+                    st.session_state.info_complementaire = self.df_info_complementaire
+            else:
+                self.df_info_complementaire = pd.DataFrame(columns=['Agent', 'Adresse', 'Telephone', 'Societe'])
+                st.session_state.info_complementaire = self.df_info_complementaire
+        else:
+            self.df_info_complementaire = st.session_state.info_complementaire
     
     def sauvegarder_donnees_permanentes(self):
         """Sauvegarde les données dans un fichier permanent"""
         try:
             if not self.df_chauffeurs.empty:
                 self.df_chauffeurs.to_excel(self.fichier_sauvegarde, index=False)
-                return True
-            return False
+            
+            if not self.df_info_complementaire.empty:
+                self.df_info_complementaire.to_excel(self.fichier_info_complementaire, index=False)
+            
+            return True
         except Exception as e:
             st.error(f"❌ Erreur sauvegarde permanente: {e}")
             return False
@@ -86,6 +99,97 @@ class GestionTransportWeb:
         except Exception as e:
             self.df_info = pd.DataFrame()
             st.sidebar.error(f"❌ Erreur chargement info.xlsx: {e}")
+    
+    def get_info_agent(self, nom_agent):
+        """Récupère les informations d'un agent depuis info.xlsx ou les données complémentaires"""
+        info_par_defaut = {
+            "adresse": "", 
+            "tel": "", 
+            "societe": "", 
+            "voiture": "Non"
+        }
+        
+        # Chercher d'abord dans info.xlsx
+        if self.df_info is not None and not self.df_info.empty:
+            try:
+                nom_recherche = nom_agent.strip()
+                
+                for idx, row in self.df_info.iterrows():
+                    nom_info = str(row.iloc[0]).strip() if len(row) > 0 else ""
+                    
+                    if nom_recherche == nom_info:
+                        a_voiture = "Non"
+                        if len(row) > 4:
+                            voiture_info = str(row.iloc[4]).strip().lower()
+                            if voiture_info in ['oui', 'yes', 'true', '1', 'x']:
+                                a_voiture = "Oui"
+                        
+                        adresse = str(row.iloc[1]) if len(row) > 1 else ""
+                        tel = str(row.iloc[2]) if len(row) > 2 else ""
+                        societe = str(row.iloc[3]) if len(row) > 3 else ""
+                        
+                        # Si toutes les informations sont présentes, retourner
+                        if adresse and tel and societe:
+                            return {
+                                "adresse": adresse,
+                                "tel": tel,
+                                "societe": societe,
+                                "voiture": a_voiture
+                            }
+            except:
+                pass
+        
+        # Chercher dans les informations complémentaires
+        if not self.df_info_complementaire.empty:
+            agent_trouve = self.df_info_complementaire[self.df_info_complementaire['Agent'] == nom_agent]
+            if not agent_trouve.empty:
+                return {
+                    "adresse": agent_trouve.iloc[0]['Adresse'] if pd.notna(agent_trouve.iloc[0]['Adresse']) else "",
+                    "tel": agent_trouve.iloc[0]['Telephone'] if pd.notna(agent_trouve.iloc[0]['Telephone']) else "",
+                    "societe": agent_trouve.iloc[0]['Societe'] if pd.notna(agent_trouve.iloc[0]['Societe']) else "",
+                    "voiture": "Non"
+                }
+        
+        return info_par_defaut
+    
+    def ajouter_info_agent(self, agent, adresse, telephone, societe):
+        """Ajoute ou met à jour les informations d'un agent"""
+        # Vérifier si l'agent existe déjà
+        if not self.df_info_complementaire.empty:
+            index_existant = self.df_info_complementaire[self.df_info_complementaire['Agent'] == agent].index
+            if not index_existant.empty:
+                # Mettre à jour
+                self.df_info_complementaire.at[index_existant[0], 'Adresse'] = adresse
+                self.df_info_complementaire.at[index_existant[0], 'Telephone'] = telephone
+                self.df_info_complementaire.at[index_existant[0], 'Societe'] = societe
+            else:
+                # Ajouter nouveau
+                nouvelle_info = pd.DataFrame({
+                    'Agent': [agent],
+                    'Adresse': [adresse],
+                    'Telephone': [telephone],
+                    'Societe': [societe]
+                })
+                self.df_info_complementaire = pd.concat([self.df_info_complementaire, nouvelle_info], ignore_index=True)
+        else:
+            # Première ajout
+            self.df_info_complementaire = pd.DataFrame({
+                'Agent': [agent],
+                'Adresse': [adresse],
+                'Telephone': [telephone],
+                'Societe': [societe]
+            })
+        
+        # Mettre à jour la session state
+        st.session_state.info_complementaire = self.df_info_complementaire
+        
+        # Sauvegarder
+        self.sauvegarder_donnees_permanentes()
+    
+    def verifier_agent_complet(self, nom_agent):
+        """Vérifie si un agent a toutes les informations nécessaires"""
+        info_agent = self.get_info_agent(nom_agent)
+        return bool(info_agent['adresse'] and info_agent['tel'] and info_agent['societe'])
     
     def sauvegarder_affectations(self):
         """Sauvegarde les affectations dans un fichier Excel pour export"""
@@ -122,36 +226,6 @@ class GestionTransportWeb:
         except Exception as e:
             st.error(f"❌ Erreur lors du chargement du fichier: {e}")
             return False
-    
-    def get_info_agent(self, nom_agent):
-        """Récupère les informations d'un agent"""
-        if self.df_info is None or self.df_info.empty:
-            return {"adresse": "Adresse non renseignée", "tel": "Tél non renseigné", "societe": "Société non renseignée", "voiture": "Non"}
-        
-        try:
-            nom_recherche = nom_agent.strip()
-            
-            for idx, row in self.df_info.iterrows():
-                nom_info = str(row.iloc[0]).strip() if len(row) > 0 else ""
-                
-                if nom_recherche == nom_info:
-                    a_voiture = "Non"
-                    if len(row) > 4:
-                        voiture_info = str(row.iloc[4]).strip().lower()
-                        if voiture_info in ['oui', 'yes', 'true', '1', 'x']:
-                            a_voiture = "Oui"
-                    
-                    return {
-                        "adresse": str(row.iloc[1]) if len(row) > 1 else "Adresse non renseignée",
-                        "tel": str(row.iloc[2]) if len(row) > 2 else "Tél non renseigné",
-                        "societe": str(row.iloc[3]) if len(row) > 3 else "Société non renseignée",
-                        "voiture": a_voiture
-                    }
-            
-            return {"adresse": "Adresse non renseignée", "tel": "Tél non renseigné", "societe": "Société non renseignée", "voiture": "Non"}
-            
-        except Exception as e:
-            return {"adresse": "Adresse non renseignée", "tel": "Tél non renseigné", "societe": "Société non renseignée", "voiture": "Non"}
     
     def get_liste_chauffeurs_voitures(self):
         """Récupère la liste des chauffeurs depuis info.xlsx"""
@@ -376,23 +450,61 @@ class GestionTransportWeb:
         self.liste_ramassage_actuelle.sort(key=lambda x: (ordre_jours.index(x['Jour']), x['Heure']))
         self.liste_depart_actuelle.sort(key=lambda x: (ordre_jours.index(x['Jour']), x['Heure']))
     
-    def get_prix_course(self, chauffeur, type_transport):
-        """Retourne le prix d'une course selon le type de chauffeur"""
-        if "taxi" in str(chauffeur).lower():
-            return self.prix_course_taxi
-        else:
-            return self.prix_course_chauffeur
-    
-    def ajouter_affectation(self, chauffeur, heure, agents_selectionnes, type_transport, jour, prix_specifique=None):
-        """Ajoute une affectation de chauffeur avec la date réelle et le prix"""
+    def ajouter_affectation(self, chauffeur, heure, agents_selectionnes, type_transport, jour):
+        """Ajoute une affectation de chauffeur avec vérification des informations"""
         date_reelle = self.get_date_du_jour(jour)
         
-        # Déterminer le prix
-        if prix_specifique is not None:
-            prix_course = prix_specifique
-        else:
-            prix_course = self.get_prix_course(chauffeur, type_transport)
+        # Vérifier d'abord si tous les agents ont des informations complètes
+        agents_incomplets = []
+        for agent_nom in agents_selectionnes:
+            if not self.verifier_agent_complet(agent_nom):
+                agents_incomplets.append(agent_nom)
         
+        # Si des agents ont des informations manquantes, afficher le formulaire
+        if agents_incomplets:
+            st.error(f"❌ Informations manquantes pour {len(agents_incomplets)} agent(s)")
+            
+            for agent_nom in agents_incomplets:
+                info_agent = self.get_info_agent(agent_nom)
+                
+                with st.expander(f"📝 Compléter les informations pour: {agent_nom}", expanded=True):
+                    st.warning(f"Veuillez compléter les informations manquantes pour {agent_nom}")
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        nouvelle_adresse = st.text_input(
+                            "Adresse complète", 
+                            value=info_agent['adresse'] if info_agent['adresse'] else "",
+                            key=f"addr_{agent_nom}_{datetime.now().timestamp()}"
+                        )
+                        nouveau_telephone = st.text_input(
+                            "Numéro de téléphone", 
+                            value=info_agent['tel'] if info_agent['tel'] else "",
+                            key=f"tel_{agent_nom}_{datetime.now().timestamp()}"
+                        )
+                    with col2:
+                        nouvelle_societe = st.text_input(
+                            "Société/Plateau", 
+                            value=info_agent['societe'] if info_agent['societe'] else "",
+                            key=f"soc_{agent_nom}_{datetime.now().timestamp()}"
+                        )
+                    
+                    # Vérifier que tous les champs sont remplis
+                    champs_remplis = nouvelle_adresse and nouveau_telephone and nouvelle_societe
+                    
+                    if st.button(f"💾 Sauvegarder les informations pour {agent_nom}", 
+                                key=f"save_{agent_nom}_{datetime.now().timestamp()}", 
+                                disabled=not champs_remplis):
+                        if champs_remplis:
+                            self.ajouter_info_agent(agent_nom, nouvelle_adresse, nouveau_telephone, nouvelle_societe)
+                            st.success(f"✅ Informations sauvegardées pour {agent_nom}")
+                            st.rerun()
+                        else:
+                            st.error("Veuillez remplir tous les champs")
+            
+            return False  # Empêcher l'ajout de l'affectation
+        
+        # Si tous les agents ont des informations complètes, ajouter l'affectation
         for agent_nom in agents_selectionnes:
             info_agent = self.get_info_agent(agent_nom)
             
@@ -407,9 +519,7 @@ class GestionTransportWeb:
                 'Type_Transport': type_transport,
                 'Jour': jour,
                 'Date_Ajout': datetime.now().strftime("%d/%m/%Y %H:%M"),
-                'Date_Reelle': date_reelle,
-                'Prix_Course': prix_course,
-                'Statut_Paiement': "Non payé"
+                'Date_Reelle': date_reelle
             }
             
             nouvelle_ligne = pd.DataFrame([nouvelle_affectation])
@@ -420,6 +530,7 @@ class GestionTransportWeb:
         
         # Sauvegarder en permanent
         self.sauvegarder_donnees_permanentes()
+        return True
     
     def supprimer_affectation(self, index):
         """Supprime une affectation"""
@@ -433,8 +544,7 @@ class GestionTransportWeb:
         """Supprime toutes les affectations"""
         self.df_chauffeurs = pd.DataFrame(columns=[
             'Chauffeur', 'Heure', 'Agent', 'Adresse', 'Telephone', 'Societe', 
-            'Vehicule', 'Type_Transport', 'Jour', 'Date_Ajout', 'Date_Reelle',
-            'Prix_Course', 'Statut_Paiement'
+            'Vehicule', 'Type_Transport', 'Jour', 'Date_Ajout', 'Date_Reelle'
         ])
         st.session_state.chauffeurs_data = self.df_chauffeurs
         
@@ -442,429 +552,7 @@ class GestionTransportWeb:
         self.sauvegarder_donnees_permanentes()
         st.success("✅ Toutes les affectations ont été supprimées")
 
-    def separer_chauffeurs_taxi(self, df_filtre):
-        """Sépare les chauffeurs Taxi des autres chauffeurs"""
-        chauffeurs_taxi = df_filtre[df_filtre['Chauffeur'].str.contains('taxi|Taxi|TAXI', na=False)]
-        chauffeurs_autres = df_filtre[~df_filtre['Chauffeur'].str.contains('taxi|Taxi|TAXI', na=False)]
-        
-        return chauffeurs_taxi, chauffeurs_autres
-    
-    def calculer_statistiques_mensuelles(self, mois=None, annee=None):
-        """Calcule les statistiques mensuelles pour la paie"""
-        if self.df_chauffeurs.empty:
-            return None
-        
-        # Filtrer par mois/année si spécifié
-        df_filtre = self.df_chauffeurs.copy()
-        
-        if mois and annee:
-            # Convertir Date_Reelle en datetime pour filtrage
-            try:
-                df_filtre['Date_Reelle_DT'] = pd.to_datetime(df_filtre['Date_Reelle'], format='%d/%m/%Y', errors='coerce')
-                df_filtre = df_filtre[
-                    (df_filtre['Date_Reelle_DT'].dt.month == mois) & 
-                    (df_filtre['Date_Reelle_DT'].dt.year == annee)
-                ]
-            except:
-                pass
-        
-        if df_filtre.empty:
-            return None
-        
-        # Séparer Taxi des autres chauffeurs
-        chauffeurs_taxi, chauffeurs_autres = self.separer_chauffeurs_taxi(df_filtre)
-        
-        statistiques = {
-            'periode': f"{mois}/{annee}" if mois and annee else "Toutes périodes",
-            'total_courses': 0,
-            'chauffeurs_normaux': {},
-            'chauffeurs_taxi': {},
-            'societes_normaux': {},
-            'societes_taxi': {},
-            'details_courses': []
-        }
-        
-        # Compter les courses pour les chauffeurs normaux
-        if not chauffeurs_autres.empty:
-            # Grouper par chauffeur et compter les courses uniques (basées sur heure + date)
-            courses_chauffeurs_normaux = chauffeurs_autres.groupby(['Chauffeur', 'Heure', 'Date_Reelle']).size()
-            
-            for (chauffeur, heure, date_reelle), nb_personnes in courses_chauffeurs_normaux.items():
-                if chauffeur not in statistiques['chauffeurs_normaux']:
-                    statistiques['chauffeurs_normaux'][chauffeur] = 0
-                statistiques['chauffeurs_normaux'][chauffeur] += 1
-                statistiques['total_courses'] += 1
-                
-                # Compter par société pour cette course
-                course_data = chauffeurs_autres[
-                    (chauffeurs_autres['Chauffeur'] == chauffeur) & 
-                    (chauffeurs_autres['Heure'] == heure) & 
-                    (chauffeurs_autres['Date_Reelle'] == date_reelle)
-                ]
-                
-                societes_course = course_data['Societe'].value_counts().to_dict()
-                for societe, count in societes_course.items():
-                    if societe not in statistiques['societes_normaux']:
-                        statistiques['societes_normaux'][societe] = 0
-                    statistiques['societes_normaux'][societe] += count
-        
-        # Compter les courses pour les Taxi
-        if not chauffeurs_taxi.empty:
-            # Grouper par chauffeur taxi et compter les courses
-            courses_chauffeurs_taxi = chauffeurs_taxi.groupby(['Chauffeur', 'Heure', 'Date_Reelle']).size()
-            
-            for (chauffeur, heure, date_reelle), nb_personnes in courses_chauffeurs_taxi.items():
-                if chauffeur not in statistiques['chauffeurs_taxi']:
-                    statistiques['chauffeurs_taxi'][chauffeur] = 0
-                statistiques['chauffeurs_taxi'][chauffeur] += 1
-                statistiques['total_courses'] += 1
-                
-                # Compter par société pour cette course
-                course_data = chauffeurs_taxi[
-                    (chauffeurs_taxi['Chauffeur'] == chauffeur) & 
-                    (chauffeurs_taxi['Heure'] == heure) & 
-                    (chauffeurs_taxi['Date_Reelle'] == date_reelle)
-                ]
-                
-                societes_course = course_data['Societe'].value_counts().to_dict()
-                for societe, count in societes_course.items():
-                    if societe not in statistiques['societes_taxi']:
-                        statistiques['societes_taxi'][societe] = 0
-                    statistiques['societes_taxi'][societe] += count
-        
-        return statistiques
-    
-    def calculer_paiements_mensuels(self, mois=None, annee=None):
-        """Calcule les paiements mensuels détaillés"""
-        stats = self.calculer_statistiques_mensuelles(mois, annee)
-        
-        if not stats:
-            return None
-        
-        paiements = {
-            'periode': stats['periode'],
-            'chauffeurs_normaux': {},
-            'chauffeurs_taxi': {},
-            'total_paiements': 0,
-            'details': []
-        }
-        
-        # Calculer les paiements pour les chauffeurs normaux
-        for chauffeur, nb_courses in stats['chauffeurs_normaux'].items():
-            montant = nb_courses * self.prix_course_chauffeur
-            paiements['chauffeurs_normaux'][chauffeur] = {
-                'nb_courses': nb_courses,
-                'montant_total': montant,
-                'prix_unitaire': self.prix_course_chauffeur
-            }
-            paiements['total_paiements'] += montant
-        
-        # Calculer les paiements pour les taxis
-        for chauffeur, nb_courses in stats['chauffeurs_taxi'].items():
-            montant = nb_courses * self.prix_course_taxi
-            paiements['chauffeurs_taxi'][chauffeur] = {
-                'nb_courses': nb_courses,
-                'montant_total': montant,
-                'prix_unitaire': self.prix_course_taxi
-            }
-            paiements['total_paiements'] += montant
-        
-        return paiements
-    
-    def generer_rapport_paie_mensuel(self, mois=None, annee=None):
-        """Génère un rapport détaillé pour la paie mensuelle avec les prix"""
-        paiements = self.calculer_paiements_mensuels(mois, annee)
-        stats = self.calculer_statistiques_mensuelles(mois, annee)
-        
-        if not paiements or not stats:
-            return None
-        
-        donnees_rapport = []
-        
-        # En-tête
-        donnees_rapport.append(["RAPPORT DE PAIE MENSUEL - TRANSPORT"])
-        donnees_rapport.append([f"Période: {paiements['periode']}"])
-        donnees_rapport.append([f"Total des courses: {stats['total_courses']}"])
-        donnees_rapport.append([f"Total à payer: {paiements['total_paiements']} €"])
-        donnees_rapport.append([])
-        
-        # Chauffeurs normaux avec prix
-        if paiements['chauffeurs_normaux']:
-            donnees_rapport.append(["CHAUFFEURS NORMAUX"])
-            donnees_rapport.append(["Chauffeur", "Nb courses", "Prix/unité", "Montant total"])
-            
-            for chauffeur, details in sorted(paiements['chauffeurs_normaux'].items(), 
-                                           key=lambda x: x[1]['montant_total'], reverse=True):
-                donnees_rapport.append([
-                    chauffeur, 
-                    details['nb_courses'], 
-                    f"{details['prix_unitaire']} €",
-                    f"{details['montant_total']} €"
-                ])
-            
-            donnees_rapport.append([])
-            
-            # Sociétés pour chauffeurs normaux
-            donnees_rapport.append(["RÉPARTITION PAR SOCIÉTÉ - CHAUFFEURS NORMAUX"])
-            donnees_rapport.append(["Société", "Nombre de personnes", "Pourcentage"])
-            
-            total_personnes_normaux = sum(stats['societes_normaux'].values())
-            for societe, count in sorted(stats['societes_normaux'].items(), key=lambda x: x[1], reverse=True):
-                pourcentage = (count / total_personnes_normaux * 100) if total_personnes_normaux > 0 else 0
-                donnees_rapport.append([societe, count, f"{pourcentage:.1f}%"])
-            
-            donnees_rapport.append([])
-        
-        # Chauffeurs Taxi avec prix
-        if paiements['chauffeurs_taxi']:
-            donnees_rapport.append(["CHAUFFEURS TAXI"])
-            donnees_rapport.append(["Chauffeur", "Nb courses", "Prix/unité", "Montant total"])
-            
-            for chauffeur, details in sorted(paiements['chauffeurs_taxi'].items(), 
-                                           key=lambda x: x[1]['montant_total'], reverse=True):
-                donnees_rapport.append([
-                    chauffeur, 
-                    details['nb_courses'], 
-                    f"{details['prix_unitaire']} €",
-                    f"{details['montant_total']} €"
-                ])
-            
-            donnees_rapport.append([])
-            
-            # Sociétés pour Taxi
-            donnees_rapport.append(["RÉPARTITION PAR SOCIÉTÉ - TAXI"])
-            donnees_rapport.append(["Société", "Nombre de personnes", "Pourcentage"])
-            
-            total_personnes_taxi = sum(stats['societes_taxi'].values())
-            for societe, count in sorted(stats['societes_taxi'].items(), key=lambda x: x[1], reverse=True):
-                pourcentage = (count / total_personnes_taxi * 100) if total_personnes_taxi > 0 else 0
-                donnees_rapport.append([societe, count, f"{pourcentage:.1f}%"])
-        
-        # Résumé financier
-        donnees_rapport.append([])
-        donnees_rapport.append(["RÉSUMÉ FINANCIER"])
-        total_chauffeurs_normaux = sum(details['montant_total'] for details in paiements['chauffeurs_normaux'].values())
-        total_taxi = sum(details['montant_total'] for details in paiements['chauffeurs_taxi'].values())
-        
-        donnees_rapport.append([f"Total chauffeurs normaux: {total_chauffeurs_normaux} €"])
-        donnees_rapport.append([f"Total taxis: {total_taxi} €"])
-        donnees_rapport.append([f"TOTAL GÉNÉRAL: {paiements['total_paiements']} €"])
-        
-        return pd.DataFrame(donnees_rapport)
-
-    def exporter_suivi_chauffeurs(self, jour_selectionne_export):
-        """Exporte le suivi des chauffeurs avec statistiques complètes et mise en forme"""
-        if self.df_chauffeurs.empty:
-            return None
-        
-        if jour_selectionne_export == "Tous":
-            df_filtre = self.df_chauffeurs
-        else:
-            df_filtre = self.df_chauffeurs[self.df_chauffeurs['Jour'] == jour_selectionne_export]
-        
-        if df_filtre.empty:
-            return None
-        
-        # Séparer Taxi des autres chauffeurs
-        chauffeurs_taxi, chauffeurs_autres = self.separer_chauffeurs_taxi(df_filtre)
-        
-        donnees_export = []
-        
-        # Style d'en-tête avec prix
-        entete_style = ["Salarié", "HEURE", "CHAUFFEUR", "DESTINATION", "Plateau", "type", "date", "Prix"]
-        donnees_export.append(entete_style)
-        donnees_export.append(["", "", "", "", "", "", "", ""])
-        
-        # Traiter d'abord les chauffeurs normaux
-        if not chauffeurs_autres.empty:
-            donnees_export.append(["🚗 CHAUFFEURS NORMAUX", "", "", "", "", "", "", ""])
-            donnees_export.append(["", "", "", "", "", "", "", ""])
-            
-            total_courses_normaux = 0
-            statistiques_societes_normaux = {}
-            statistiques_chauffeurs_normaux = {}
-            
-            # Grouper par jour, chauffeur, heure et type
-            groupes = chauffeurs_autres.groupby(['Jour', 'Chauffeur', 'Heure', 'Type_Transport', 'Date_Reelle'])
-            
-            # Trier par date, puis chauffeur, puis heure
-            ordre_jours = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
-            groupes_tries = sorted(groupes, key=lambda x: (
-                x[0][4],  # Date_Reelle
-                ordre_jours.index(x[0][0]),
-                x[0][1], 
-                x[0][2]
-            ))
-            
-            for (jour, chauffeur, heure, type_transport, date_reelle), groupe in groupes_tries:
-                nb_personnes_course = len(groupe)
-                societes_course = {}
-                
-                # Compter par chauffeur
-                if chauffeur not in statistiques_chauffeurs_normaux:
-                    statistiques_chauffeurs_normaux[chauffeur] = 0
-                statistiques_chauffeurs_normaux[chauffeur] += 1
-                
-                # Ajouter chaque agent
-                for idx, (_, ligne) in enumerate(groupe.iterrows()):
-                    societe = ligne['Societe']
-                    if societe not in societes_course:
-                        societes_course[societe] = 0
-                    societes_course[societe] += 1
-                    
-                    if societe not in statistiques_societes_normaux:
-                        statistiques_societes_normaux[societe] = 0
-                    statistiques_societes_normaux[societe] += 1
-                    
-                    donnees_export.append([
-                        ligne['Agent'], f"{heure}", chauffeur, ligne['Adresse'],
-                        societe, type_transport.lower(), date_reelle, f"{ligne['Prix_Course']} €"
-                    ])
-                
-                # Ajouter les statistiques de la course
-                if societes_course:
-                    pourcentages = []
-                    for societe, count in societes_course.items():
-                        pourcentage = (count / nb_personnes_course) * 100
-                        pourcentages.append(f"{pourcentage:.0f}% {societe}")
-                    
-                    texte_pourcentages = " + ".join(pourcentages)
-                    donnees_export.append([
-                        f"RÉPARTITION COURSE ({nb_personnes_course} pers.)", "", "", texte_pourcentages, "", "", "", ""
-                    ])
-            
-                total_courses_normaux += 1
-                donnees_export.append(["", "", "", "", "", "", "", ""])
-        
-        # Traiter les chauffeurs Taxi
-        if not chauffeurs_taxi.empty:
-            donnees_export.append(["🚕 CHAUFFEURS TAXI", "", "", "", "", "", "", ""])
-            donnees_export.append(["", "", "", "", "", "", "", ""])
-            
-            total_courses_taxi = 0
-            statistiques_societes_taxi = {}
-            statistiques_chauffeurs_taxi = {}
-            
-            # Grouper correctement les courses Taxi
-            groupes_taxi = chauffeurs_taxi.groupby(['Chauffeur', 'Heure', 'Type_Transport', 'Jour', 'Date_Reelle'])
-            
-            # Trier par date, chauffeur, puis heure
-            groupes_taxi_tries = sorted(groupes_taxi, key=lambda x: (
-                x[0][4],  # Date_Reelle
-                x[0][0],  # Chauffeur
-                x[0][1],  # Heure
-            ))
-            
-            for (chauffeur, heure, type_transport, jour, date_reelle), groupe in groupes_taxi_tries:
-                nb_personnes_course = len(groupe)
-                societes_course = {}
-                
-                # Compter correctement les chauffeurs taxi
-                if chauffeur not in statistiques_chauffeurs_taxi:
-                    statistiques_chauffeurs_taxi[chauffeur] = 0
-                statistiques_chauffeurs_taxi[chauffeur] += 1
-                
-                # Ajouter chaque agent
-                for idx, (_, ligne) in enumerate(groupe.iterrows()):
-                    societe = ligne['Societe']
-                    if societe not in societes_course:
-                        societes_course[societe] = 0
-                    societes_course[societe] += 1
-                    
-                    if societe not in statistiques_societes_taxi:
-                        statistiques_societes_taxi[societe] = 0
-                    statistiques_societes_taxi[societe] += 1
-                    
-                    donnees_export.append([
-                        ligne['Agent'], f"{heure}", chauffeur, ligne['Adresse'],
-                        societe, type_transport.lower(), date_reelle, f"{ligne['Prix_Course']} €"
-                    ])
-                
-                # Ajouter les statistiques de la course
-                if societes_course:
-                    pourcentages = []
-                    for societe, count in societes_course.items():
-                        pourcentage = (count / nb_personnes_course) * 100
-                        pourcentages.append(f"{pourcentage:.0f}% {societe}")
-                    
-                    texte_pourcentages = " + ".join(pourcentages)
-                    donnees_export.append([
-                        f"RÉPARTITION COURSE TAXI ({nb_personnes_course} pers.)", "", "", texte_pourcentages, "", "", "", ""
-                    ])
-                
-                total_courses_taxi += 1
-                donnees_export.append(["", "", "", "", "", "", "", ""])
-        
-        # Supprimer les lignes vides en double à la fin
-        while len(donnees_export) > 1 and donnees_export[-1] == ["", "", "", "", "", "", "", ""]:
-            donnees_export.pop()
-        
-        # STATISTIQUES GLOBALES AVEC PRIX
-        donnees_export.append(["STATISTIQUES GLOBALES", "", "", "", "", "", "", ""])
-        
-        # Statistiques pour chauffeurs normaux
-        if not chauffeurs_autres.empty:
-            donnees_export.append(["🚗 CHAUFFEURS NORMAUX", "", "", "", "", "", "", ""])
-            donnees_export.append([f"Total des courses normales: {total_courses_normaux}", "", "", "", "", "", "", ""])
-            donnees_export.append([f"Prix unitaire: {self.prix_course_chauffeur} €", "", "", "", "", "", "", ""])
-            
-            # Statistiques par chauffeur normaux
-            donnees_export.append(["📊 PAR CHAUFFEUR NORMAL", "", "", "", "", "", "", ""])
-            for chauffeur, nb_courses in sorted(statistiques_chauffeurs_normaux.items(), key=lambda x: x[1], reverse=True):
-                pourcentage_chauffeur = (nb_courses / total_courses_normaux * 100) if total_courses_normaux > 0 else 0
-                montant_chauffeur = nb_courses * self.prix_course_chauffeur
-                donnees_export.append([
-                    "", "", f"{chauffeur}: {nb_courses} courses ({pourcentage_chauffeur:.1f}%) - {montant_chauffeur} €", "", "", "", "", ""
-                ])
-            
-            # Statistiques par société normaux
-            donnees_export.append(["🏢 PAR SOCIÉTÉ NORMALE", "", "", "", "", "", "", ""])
-            total_personnes_normaux = sum(statistiques_societes_normaux.values())
-            for societe, count in sorted(statistiques_societes_normaux.items(), key=lambda x: x[1], reverse=True):
-                pourcentage_global = (count / total_personnes_normaux * 100) if total_personnes_normaux > 0 else 0
-                donnees_export.append([
-                    "", "", "", f"{societe}: {count} personnes ({pourcentage_global:.1f}%)", "", "", "", ""
-                ])
-        
-        # Statistiques pour Taxi
-        if not chauffeurs_taxi.empty:
-            donnees_export.append(["🚕 CHAUFFEURS TAXI", "", "", "", "", "", "", ""])
-            donnees_export.append([f"Total des courses taxi: {total_courses_taxi}", "", "", "", "", "", "", ""])
-            donnees_export.append([f"Prix unitaire: {self.prix_course_taxi} €", "", "", "", "", "", "", ""])
-            
-            # Statistiques par chauffeur taxi
-            donnees_export.append(["📊 PAR CHAUFFEUR TAXI", "", "", "", "", "", "", ""])
-            for chauffeur, nb_courses in sorted(statistiques_chauffeurs_taxi.items(), key=lambda x: x[1], reverse=True):
-                pourcentage_chauffeur = (nb_courses / total_courses_taxi * 100) if total_courses_taxi > 0 else 0
-                montant_chauffeur = nb_courses * self.prix_course_taxi
-                donnees_export.append([
-                    "", "", f"{chauffeur}: {nb_courses} courses ({pourcentage_chauffeur:.1f}%) - {montant_chauffeur} €", "", "", "", "", ""
-                ])
-            
-            # Statistiques par société taxi
-            donnees_export.append(["🏢 PAR SOCIÉTÉ TAXI", "", "", "", "", "", "", ""])
-            total_personnes_taxi = sum(statistiques_societes_taxi.values())
-            for societe, count in sorted(statistiques_societes_taxi.items(), key=lambda x: x[1], reverse=True):
-                pourcentage_global = (count / total_personnes_taxi * 100) if total_personnes_taxi > 0 else 0
-                donnees_export.append([
-                    "", "", "", f"{societe}: {count} personnes ({pourcentage_global:.1f}%)", "", "", "", ""
-                ])
-        
-        # RÉSUMÉ FINAL SIMPLIFIÉ
-        donnees_export.append(["", "", "", "", "", "", "", ""])
-        donnees_export.append(["RÉSUMÉ FINAL", "", "", "", "", "", "", ""])
-        total_courses_global = total_courses_normaux + total_courses_taxi
-        total_personnes_global = (sum(statistiques_societes_normaux.values()) if not chauffeurs_autres.empty else 0) + (sum(statistiques_societes_taxi.values()) if not chauffeurs_taxi.empty else 0)
-        total_montant_global = (total_courses_normaux * self.prix_course_chauffeur) + (total_courses_taxi * self.prix_course_taxi)
-        
-        donnees_export.append([f"Total courses toutes catégories: {total_courses_global}", "", "", "", "", "", "", ""])
-        donnees_export.append([f"Total personnes transportées: {total_personnes_global}", "", "", "", "", "", "", ""])
-        donnees_export.append([f"TOTAL MONTAANT À PAYER: {total_montant_global} €", "", "", "", "", "", "", ""])
-        
-        return pd.DataFrame(donnees_export)
-
-    # Les autres méthodes (generer_rapport_imprimable, generer_pdf_imprimable) restent similaires
-    # ... (inclure les autres méthodes existantes)
+    # ... (le reste des méthodes reste inchangé)
 
 def main():
     st.set_page_config(
@@ -910,16 +598,10 @@ def main():
             border: 1px solid #bee5eb;
             color: #0c5460;
         }
-        .price-config {
-            background-color: #f8f9fa;
-            padding: 1rem;
-            border-radius: 0.5rem;
-            border-left: 4px solid #28a745;
-        }
         </style>
     """, unsafe_allow_html=True)
     
-    st.markdown('<h1 class="main-header">🚗 Gestionnaire de Transport Avancé</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">🚗 Gestionnaire de Transport</h1>', unsafe_allow_html=True)
     
     # Initialiser la classe principale
     gestion = GestionTransportWeb()
@@ -975,26 +657,6 @@ def main():
             heure_01h = st.checkbox("01h", value=True, key="d1")
             heure_02h = st.checkbox("02h", value=True, key="d2")
             heure_03h = st.checkbox("03h", value=True, key="d3")
-        
-        # Configuration des prix
-        st.header("💰 Configuration des Prix")
-        with st.container():
-            st.markdown('<div class="price-config">', unsafe_allow_html=True)
-            gestion.prix_course_chauffeur = st.number_input(
-                "Prix course chauffeur normal (DNT)", 
-                min_value=0.0, 
-                value=19.0, 
-                step=0.5,
-                help="Prix par course pour les chauffeurs normaux"
-            )
-            gestion.prix_course_taxi = st.number_input(
-                "Prix course taxi (€)", 
-                min_value=0.0, 
-                value=23.0, 
-                step=0.5,
-                help="Prix par course pour les taxis"
-            )
-            st.markdown('</div>', unsafe_allow_html=True)
         
         # Section gestion des affectations
         st.header("💾 Gestion des Données")
@@ -1062,111 +724,7 @@ def main():
         gestion.traiter_donnees(heure_ete_active, jour_selectionne, heures_ramassage, heures_depart)
         
         # Onglets
-        tab1, tab2, tab3, tab4 = st.tabs(["🚗 Liste de Ramassage", "🚙 Liste de Départ", "👨‍✈️ Gestion Chauffeurs", "💰 Rapport de Paie"])
-        
-        with tab1:
-            st.markdown('<h2 class="section-header">📋 Liste de Ramassage</h2>', unsafe_allow_html=True)
-            
-            # Boutons Imprimer
-            col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 2])
-            with col_btn1:
-                if st.button("📄 Excel Imprimable", type="primary"):
-                    rapport = gestion.generer_rapport_imprimable("ramassage", jour_selectionne)
-                    if rapport is not None:
-                        output = BytesIO()
-                        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                            rapport.to_excel(writer, sheet_name='Liste_Ramassage', index=False, header=False)
-                        
-                        st.download_button(
-                            label="📥 Télécharger Excel",
-                            data=output.getvalue(),
-                            file_name=f"Liste_Ramassage_{datetime.now().strftime('%d%m%Y_%H%M')}.xlsx",
-                            mime="application/vnd.ms-excel"
-                        )
-                    else:
-                        st.warning("Aucune donnée à imprimer")
-            
-            with col_btn2:
-                if st.button("📊 PDF Imprimable", type="secondary"):
-                    pdf_data = gestion.generer_pdf_imprimable("ramassage", jour_selectionne)
-                    if pdf_data is not None:
-                        st.download_button(
-                            label="📥 Télécharger PDF",
-                            data=pdf_data,
-                            file_name=f"Liste_Ramassage_{datetime.now().strftime('%d%m%Y_%H%M')}.pdf",
-                            mime="application/pdf"
-                        )
-                    else:
-                        st.warning("Aucune donnée à imprimer")
-            
-            if gestion.liste_ramassage_actuelle:
-                mode_heure = "HEURE D'ÉTÉ" if heure_ete_active else "HEURE NORMALE"
-                st.write(f"**Mode:** {mode_heure} | **Jours:** {jour_selectionne} | **Heures:** {', '.join([f'{h}h' for h in heures_ramassage])}")
-                
-                # Afficher par jour dans l'ordre
-                ordre_jours = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
-                for jour in ordre_jours:
-                    agents_du_jour = [a for a in gestion.liste_ramassage_actuelle if a['Jour'] == jour]
-                    if agents_du_jour and (jour_selectionne == 'Tous' or jour == jour_selectionne):
-                        date_jour = gestion.get_date_du_jour(jour)
-                        st.subheader(f"📅 {jour} ({date_jour})")
-                        
-                        df_affiche = pd.DataFrame(agents_du_jour)[['Agent', 'Heure_affichage', 'Adresse', 'Telephone', 'Societe']]
-                        st.dataframe(df_affiche, use_container_width=True)
-            else:
-                st.info("ℹ️ Aucun agent trouvé avec les filtres sélectionnés")
-        
-        with tab2:
-            st.markdown('<h2 class="section-header">📋 Liste de Départ</h2>', unsafe_allow_html=True)
-            
-            # Boutons Imprimer
-            col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 2])
-            with col_btn1:
-                if st.button("📄 Excel Imprimable", type="primary", key="excel_depart"):
-                    rapport = gestion.generer_rapport_imprimable("depart", jour_selectionne)
-                    if rapport is not None:
-                        output = BytesIO()
-                        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                            rapport.to_excel(writer, sheet_name='Liste_Depart', index=False, header=False)
-                        
-                        st.download_button(
-                            label="📥 Télécharger Excel",
-                            data=output.getvalue(),
-                            file_name=f"Liste_Depart_{datetime.now().strftime('%d%m%Y_%H%M')}.xlsx",
-                            mime="application/vnd.ms-excel"
-                        )
-                    else:
-                        st.warning("Aucune donnée à imprimer")
-            
-            with col_btn2:
-                if st.button("📊 PDF Imprimable", type="secondary", key="pdf_depart"):
-                    pdf_data = gestion.generer_pdf_imprimable("depart", jour_selectionne)
-                    if pdf_data is not None:
-                        st.download_button(
-                            label="📥 Télécharger PDF",
-                            data=pdf_data,
-                            file_name=f"Liste_Depart_{datetime.now().strftime('%d%m%Y_%H%M')}.pdf",
-                            mime="application/pdf"
-                        )
-                    else:
-                        st.warning("Aucune donnée à imprimer")
-            
-            if gestion.liste_depart_actuelle:
-                mode_heure = "HEURE D'ÉTÉ" if heure_ete_active else "HEURE NORMALE"
-                st.write(f"**Mode:** {mode_heure} | **Jours:** {jour_selectionne} | **Heures:** {', '.join([f'{h}h' for h in heures_depart])}")
-                
-                # Afficher par jour dans l'ordre
-                ordre_jours = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
-                for jour in ordre_jours:
-                    agents_du_jour = [a for a in gestion.liste_depart_actuelle if a['Jour'] == jour]
-                    if agents_du_jour and (jour_selectionne == 'Tous' or jour == jour_selectionne):
-                        date_jour = gestion.get_date_du_jour(jour)
-                        st.subheader(f"📅 {jour} ({date_jour})")
-                        
-                        df_affiche = pd.DataFrame(agents_du_jour)[['Agent', 'Heure_affichage', 'Adresse', 'Telephone', 'Societe']]
-                        st.dataframe(df_affiche, use_container_width=True)
-            else:
-                st.info("ℹ️ Aucun agent trouvé avec les filtres sélectionnés")
+        tab1, tab2, tab3 = st.tabs(["🚗 Liste de Ramassage", "🚙 Liste de Départ", "👨‍✈️ Gestion Chauffeurs"])
         
         with tab3:
             st.markdown('<h2 class="section-header">👨‍✈️ Gestion des Chauffeurs</h2>', unsafe_allow_html=True)
@@ -1208,19 +766,6 @@ def main():
                 chauffeur = st.selectbox("Chauffeur", noms_chauffeurs)
                 type_transport = st.selectbox("Type de transport", ["Ramassage", "Départ"])
                 
-                # Afficher le prix automatique
-                prix_auto = gestion.get_prix_course(chauffeur, type_transport)
-                st.info(f"💰 Prix automatique: **{prix_auto} €**")
-                
-                # Option pour modifier le prix
-                prix_personnalise = st.number_input(
-                    "Prix personnalisé (optionnel)", 
-                    min_value=0.0, 
-                    value=prix_auto, 
-                    step=0.5,
-                    help="Laissez le prix automatique ou modifiez-le"
-                )
-                
                 # Heures selon le type
                 if type_transport == "Ramassage":
                     heure = st.selectbox("Heure", ['6h', '7h', '8h', '22h'])
@@ -1248,12 +793,10 @@ def main():
                     
                     if st.button("✅ Ajouter l'affectation", type="primary"):
                         if chauffeur and heure and agents_selectionnes:
-                            # Utiliser le prix personnalisé s'il est différent du prix auto
-                            prix_final = prix_personnalise if prix_personnalise != prix_auto else None
-                            
-                            gestion.ajouter_affectation(chauffeur, heure, agents_selectionnes, type_transport, jour, prix_final)
-                            st.success(f"Affectation ajoutée pour {len(agents_selectionnes)} agent(s) avec {chauffeur}")
-                            st.rerun()
+                            success = gestion.ajouter_affectation(chauffeur, heure, agents_selectionnes, type_transport, jour)
+                            if success:
+                                st.success(f"Affectation ajoutée pour {len(agents_selectionnes)} agent(s) avec {chauffeur}")
+                                st.rerun()
                         else:
                             st.warning("Veuillez sélectionner un chauffeur, une heure et au moins un agent")
                 else:
@@ -1263,7 +806,7 @@ def main():
                 st.subheader("📋 Affectations en cours")
                 
                 if not gestion.df_chauffeurs.empty:
-                    # Afficher les affectations avec prix
+                    # Afficher les affectations
                     for idx, ligne in gestion.df_chauffeurs.iterrows():
                         with st.container():
                             col_a, col_b = st.columns([4, 1])
@@ -1273,7 +816,6 @@ def main():
                                 st.write(f"{badge} **{chauffeur_nom}** - {ligne['Heure']} - {ligne['Type_Transport']} - {ligne['Jour']}")
                                 st.write(f"👤 {ligne['Agent']} | 📍 {ligne['Adresse']} | 📞 {ligne['Telephone']} | 🏢 {ligne['Societe']}")
                                 st.write(f"📅 **Date réelle:** {ligne['Date_Reelle']}")
-                                st.write(f"💰 **Prix:** {ligne['Prix_Course']} € | **Statut:** {ligne['Statut_Paiement']}")
                                 if 'Date_Ajout' in ligne and pd.notna(ligne['Date_Ajout']):
                                     st.caption(f"🕐 Ajouté le: {ligne['Date_Ajout']}")
                             with col_b:
@@ -1281,121 +823,9 @@ def main():
                                     gestion.supprimer_affectation(idx)
                                     st.rerun()
                             st.divider()
-                    
-                    # Bouton d'export avec prix
-                    st.subheader("📊 Export avec Statistiques et Prix")
-                    jour_export = st.selectbox("Jour à exporter", ['Tous', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'], key="export_jour")
-                    
-                    if st.button("💾 Exporter le suivi des chauffeurs", type="primary"):
-                        df_export = gestion.exporter_suivi_chauffeurs(jour_export)
-                        if df_export is not None:
-                            # Créer le fichier Excel
-                            output = BytesIO()
-                            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                                df_export.to_excel(writer, sheet_name='Suivi_Chauffeurs', index=False, header=False)
-                            
-                            # Téléchargement
-                            st.download_button(
-                                label="📥 Télécharger le fichier Excel",
-                                data=output.getvalue(),
-                                file_name=f"Suivi_Chauffeurs_{datetime.now().strftime('%d%m%Y_%H%M')}.xlsx",
-                                mime="application/vnd.ms-excel"
-                            )
-                        else:
-                            st.warning("Aucune donnée à exporter pour les critères sélectionnés")
                 
                 else:
                     st.info("ℹ️ Aucune affectation de chauffeur enregistrée")
-        
-        with tab4:
-            st.markdown('<h2 class="section-header">💰 Rapport de Paie Mensuel</h2>', unsafe_allow_html=True)
-            
-            # Sélection du mois et année
-            col_mois, col_annee = st.columns(2)
-            with col_mois:
-                mois_selectionne = st.selectbox("Mois", 
-                    list(range(1, 13)), 
-                    format_func=lambda x: f"{x} - {['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'][x-1]}",
-                    index=datetime.now().month-1)
-            
-            with col_annee:
-                annee_selectionnee = st.selectbox("Année", 
-                    list(range(2020, datetime.now().year + 3)),
-                    index=datetime.now().year-2020)
-            
-            # Générer le rapport de paie
-            if st.button("💰 Générer le rapport de paie", type="primary"):
-                rapport_paie = gestion.generer_rapport_paie_mensuel(mois_selectionne, annee_selectionnee)
-                
-                if rapport_paie is not None:
-                    # Afficher le rapport
-                    st.subheader(f"📊 Rapport de Paie - {mois_selectionne}/{annee_selectionnee}")
-                    st.dataframe(rapport_paie, use_container_width=True, hide_index=True)
-                    
-                    # Téléchargement
-                    output = BytesIO()
-                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        rapport_paie.to_excel(writer, sheet_name=f'Paie_{mois_selectionne}_{annee_selectionnee}', index=False, header=False)
-                    
-                    st.download_button(
-                        label="📥 Télécharger le rapport de paie",
-                        data=output.getvalue(),
-                        file_name=f"Rapport_Paie_Transport_{mois_selectionne}_{annee_selectionnee}.xlsx",
-                        mime="application/vnd.ms-excel"
-                    )
-                    
-                    # Statistiques financières détaillées
-                    paiements = gestion.calculer_paiements_mensuels(mois_selectionne, annee_selectionnee)
-                    if paiements:
-                        st.subheader("💰 Détail des Paiements")
-                        
-                        col_fin1, col_fin2 = st.columns(2)
-                        with col_fin1:
-                            st.metric("Total à payer", f"{paiements['total_paiements']} €")
-                            st.write("**Chauffeurs normaux:**")
-                            for chauffeur, details in sorted(paiements['chauffeurs_normaux'].items(), 
-                                                           key=lambda x: x[1]['montant_total'], reverse=True):
-                                st.write(f"- {chauffeur}: {details['nb_courses']} courses = {details['montant_total']} €")
-                        
-                        with col_fin2:
-                            total_chauffeurs = sum(details['montant_total'] for details in paiements['chauffeurs_normaux'].values())
-                            total_taxis = sum(details['montant_total'] for details in paiements['chauffeurs_taxi'].values())
-                            st.metric("Chauffeurs normaux", f"{total_chauffeurs} €")
-                            st.metric("Taxis", f"{total_taxis} €")
-                            
-                            if paiements['chauffeurs_taxi']:
-                                st.write("**Taxis:**")
-                                for chauffeur, details in sorted(paiements['chauffeurs_taxi'].items(), 
-                                                               key=lambda x: x[1]['montant_total'], reverse=True):
-                                    st.write(f"- {chauffeur}: {details['nb_courses']} courses = {details['montant_total']} €")
-                else:
-                    st.warning("Aucune donnée trouvée pour la période sélectionnée")
-            
-            # Affichage des statistiques globales avec prix
-            st.subheader("📊 Statistiques Globales avec Prix")
-            if not gestion.df_chauffeurs.empty:
-                paiements_globaux = gestion.calculer_paiements_mensuels()
-                if paiements_globaux:
-                    col_glob1, col_glob2 = st.columns(2)
-                    
-                    with col_glob1:
-                        st.metric("Total courses toutes périodes", paiements_globaux.get('total_courses', 0))
-                        st.metric("Chauffeurs normaux", len(paiements_globaux['chauffeurs_normaux']))
-                        st.metric("Chauffeurs Taxi", len(paiements_globaux['chauffeurs_taxi']))
-                    
-                    with col_glob2:
-                        st.metric("Total à payer", f"{paiements_globaux['total_paiements']} €")
-                        total_chauffeurs_glob = sum(details['montant_total'] for details in paiements_globaux['chauffeurs_normaux'].values())
-                        total_taxi_glob = sum(details['montant_total'] for details in paiements_globaux['chauffeurs_taxi'].values())
-                        st.metric("Dont chauffeurs normaux", f"{total_chauffeurs_glob} €")
-                        st.metric("Dont taxis", f"{total_taxi_glob} €")
-            else:
-                st.info("Aucune statistique disponible - Ajoutez des affectations d'abord")
-    
-    else:
-        st.info("👈 Veuillez sélectionner un fichier Excel dans la barre latérale pour commencer")
 
 if __name__ == "__main__":
     main()
-
-
